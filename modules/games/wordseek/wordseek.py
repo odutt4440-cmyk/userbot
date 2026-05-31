@@ -1,799 +1,204 @@
-# =========================================
-# WORDSEEK TELETHON USERBOT
-# ULTRA FAST + AUTO LOOP + SMART SOLVER
-# FULL FINAL VERSION
-# =========================================
-
 import json
 import random
 import asyncio
 import unicodedata
-
+import os
 from collections import Counter
-from telethon import TelegramClient, events
+from telethon import events
 
 # =========================================
-# TELEGRAM
+# LOAD WORDLISTS (Shared Memory)
 # =========================================
+# Dictionary path handling
+FOLDER = os.path.dirname(__file__)
 
-API_ID = 27309741
-API_HASH = "7c2cabcd8d3f982d6f790eef7262890f"
+def load_json(filename):
+    with open(os.path.join(FOLDER, filename), "r", encoding="utf-8") as f:
+        return json.load(f)
 
-SESSION = "wordseek_session"
+# Global shared dictionaries (Loaded only once)
+ALL4 = load_json("all-four.json")
+COMMON4 = load_json("common-four.json")
+ALL5 = load_json("all-five.json")
+COMMON5 = load_json("common-five.json")
+ALL6 = load_json("all-six.json")
+COMMON6 = load_json("common-six.json")
 
-client = TelegramClient(
-    SESSION,
-    API_ID,
-    API_HASH
-)
-
-# =========================================
-# CONFIG
-# =========================================
-
-BOT_USERNAME = "wordseekbot"
-
-ENABLED = False
-ACTIVE_CHAT = None
-
-MIN_DELAY = 0.05
-MAX_DELAY = 0.15
-
-CURRENT_MODE = 5
-
-WORDS = []
-COMMON = []
-
-USED_WORDS = set()
-
-LAST_GUESS = None
-
-# LOOP SYSTEM
-
-AUTO_LOOP = False
-LOOP_COMMAND = "/new"
+STARTERS = {4: "Care", 5: "Slate", 6: "Retain"}
 
 # =========================================
-# LOAD WORDLISTS
+# THE MODULE REGISTER
 # =========================================
-
-with open("all-four.json", "r", encoding="utf-8") as f:
-    ALL4 = json.load(f)
-
-with open("common-four.json", "r", encoding="utf-8") as f:
-    COMMON4 = json.load(f)
-
-with open("all-five.json", "r", encoding="utf-8") as f:
-    ALL5 = json.load(f)
-
-with open("common-five.json", "r", encoding="utf-8") as f:
-    COMMON5 = json.load(f)
-
-with open("all-six.json", "r", encoding="utf-8") as f:
-    ALL6 = json.load(f)
-
-with open("common-six.json", "r", encoding="utf-8") as f:
-    COMMON6 = json.load(f)
-
-# =========================================
-# BEST STARTERS
-# =========================================
-
-STARTERS = {
-    4: "Care",
-    5: "Slate",
-    6: "Retain"
-}
-
-# =========================================
-# STATES
-# =========================================
-
-GREEN = {}
-YELLOW = {}
-BLACK = set()
-
-# =========================================
-# RESET
-# =========================================
-
-def reset_state():
-
-    global GREEN
-    global YELLOW
-    global BLACK
-    global USED_WORDS
-    global LAST_GUESS
-
-    GREEN = {}
-    YELLOW = {}
-    BLACK = set()
-
-    USED_WORDS = set()
-
-    LAST_GUESS = None
-
-# =========================================
-# LOAD MODE
-# =========================================
-
-def load_mode(mode):
-
-    global CURRENT_MODE
-    global WORDS
-    global COMMON
-
-    CURRENT_MODE = mode
-
-    if mode == 4:
-
-        WORDS = ALL4.copy()
-        COMMON = COMMON4.copy()
-
-    elif mode == 5:
-
-        WORDS = ALL5.copy()
-        COMMON = COMMON5.copy()
-
-    elif mode == 6:
-
-        WORDS = ALL6.copy()
-        COMMON = COMMON6.copy()
-
-# =========================================
-# CLEAN WORD
-# =========================================
-
-def clean_word(word):
-
-    result = ""
-
-    for ch in word:
-
-        normalized = unicodedata.normalize(
-            "NFKD",
-            ch
-        )
-
-        for c in normalized:
-
-            if c.isalpha():
-                result += c.lower()
-
-    return result
-
-# =========================================
-# PARSE FEEDBACK
-# =========================================
-
-def parse_feedback(text):
-
-    lines = text.splitlines()
-
-    target = None
-
-    for line in reversed(lines):
-
-        if (
-            "🟩" in line
-            or "🟨" in line
-            or "🟥" in line
-        ):
-
-            target = line.strip()
-
-            break
-
-    if not target:
-        return None
-
-    parts = target.split()
-
-    feedback = []
-    guess = None
-
-    for part in parts:
-
-        if part in ["🟩", "🟨", "🟥"]:
-
-            feedback.append(part)
-
-        else:
-
-            cleaned = clean_word(part)
-
-            if cleaned:
-                guess = cleaned
-
-    if not guess:
-        return None
-
-    if len(feedback) != len(guess):
-        return None
-
-    return guess, feedback
-
-# =========================================
-# APPLY CONSTRAINTS
-# =========================================
-
-def apply_constraints(guess, feedback):
-
-    global GREEN
-    global YELLOW
-    global BLACK
-
-    confirmed = Counter()
-
-    # GREEN
-
-    for i, state in enumerate(feedback):
-
-        char = guess[i]
-
-        if state == "🟩":
-
-            GREEN[i] = char
-
-            confirmed[char] += 1
-
-    # YELLOW
-
-    for i, state in enumerate(feedback):
-
-        char = guess[i]
-
-        if state == "🟨":
-
-            if char not in YELLOW:
-                YELLOW[char] = set()
-
-            YELLOW[char].add(i)
-
-            confirmed[char] += 1
-
-    # BLACK
-
-    for i, state in enumerate(feedback):
-
-        char = guess[i]
-
-        if state == "🟥":
-
-            if confirmed[char] == 0:
-
-                BLACK.add(char)
-
-# =========================================
-# VALID WORD
-# =========================================
-
-def valid_word(word):
-
-    word = word.lower()
-
-    # GREEN
-
-    for pos, char in GREEN.items():
-
-        if word[pos] != char:
-            return False
-
-    # YELLOW
-
-    for char, bad_positions in YELLOW.items():
-
-        if char not in word:
-            return False
-
-        for pos in bad_positions:
-
-            if word[pos] == char:
+def register(client):
+    # --- Per-User State (Mismatch Protection) ---
+    client.ws_enabled = True
+    client.ws_chat = None
+    client.ws_delay_min = 0.05
+    client.ws_delay_max = 0.15
+    client.ws_mode = 5
+    client.ws_loop = False
+    client.ws_loop_cmd = "/new"
+    
+    # Game states
+    client.ws_words = ALL5.copy()
+    client.ws_common = COMMON5.copy()
+    client.ws_used = set()
+    client.ws_green = {}
+    client.ws_yellow = {}
+    client.ws_black = set()
+    client.ws_last_guess = None
+
+    # --- HELPERS ---
+    def reset_state():
+        client.ws_green = {}
+        client.ws_yellow = {}
+        client.ws_black = set()
+        client.ws_used = set()
+        client.ws_last_guess = None
+
+    def load_mode(mode):
+        client.ws_mode = mode
+        if mode == 4:
+            client.ws_words = ALL4.copy()
+            client.ws_common = COMMON4.copy()
+        elif mode == 5:
+            client.ws_words = ALL5.copy()
+            client.ws_common = COMMON5.copy()
+        elif mode == 6:
+            client.ws_words = ALL6.copy()
+            client.ws_common = COMMON6.copy()
+
+    def clean_word(word):
+        result = ""
+        for ch in word:
+            normalized = unicodedata.normalize("NFKD", ch)
+            for c in normalized:
+                if c.isalpha(): result += c.lower()
+        return result
+
+    def parse_feedback(text):
+        lines = text.splitlines()
+        target = None
+        for line in reversed(lines):
+            if any(emoji in line for emoji in ["🟩", "🟨", "🟥"]):
+                target = line.strip()
+                break
+        if not target: return None
+        parts = target.split()
+        feedback = []
+        guess = None
+        for part in parts:
+            if part in ["🟩", "🟨", "🟥"]:
+                feedback.append(part)
+            else:
+                cleaned = clean_word(part)
+                if cleaned: guess = cleaned
+        if not guess or len(feedback) != len(guess): return None
+        return guess, feedback
+
+    def apply_constraints(guess, feedback):
+        confirmed = Counter()
+        for i, state in enumerate(feedback):
+            char = guess[i]
+            if state == "🟩":
+                client.ws_green[i] = char
+                confirmed[char] += 1
+        for i, state in enumerate(feedback):
+            char = guess[i]
+            if state == "🟨":
+                if char not in client.ws_yellow: client.ws_yellow[char] = set()
+                client.ws_yellow[char].add(i)
+                confirmed[char] += 1
+        for i, state in enumerate(feedback):
+            char = guess[i]
+            if state == "🟥":
+                if confirmed[char] == 0: client.ws_black.add(char)
+
+    def valid_word(word):
+        word = word.lower()
+        for pos, char in client.ws_green.items():
+            if word[pos] != char: return False
+        for char, bad_positions in client.ws_yellow.items():
+            if char not in word: return False
+            for pos in bad_positions:
+                if word[pos] == char: return False
+        for char in client.ws_black:
+            if char in word and char not in client.ws_yellow and char not in client.ws_green.values():
                 return False
-
-    # BLACK
-
-    for char in BLACK:
-
-        if (
-            char in word
-            and char not in YELLOW
-            and char not in GREEN.values()
-        ):
-            return False
-
-    return True
-
-# =========================================
-# BUILD FREQUENCY
-# =========================================
-
-def build_frequency(words):
-
-    freq = Counter()
-
-    for word in words:
-
-        for char in set(word.lower()):
-
-            freq[char] += 1
-
-    return freq
-
-# =========================================
-# SCORE WORD
-# =========================================
-
-def score_word(word, freq):
-
-    score = 0
-
-    used = set()
-
-    for char in word.lower():
-
-        if char not in used:
-
-            score += freq[char]
-
-            used.add(char)
-
-    return score
-
-# =========================================
-# NEXT GUESS
-# =========================================
-
-def get_next_guess():
-
-    valid_common = [
-
-        w for w in COMMON
-
-        if (
-            valid_word(w)
-            and w.lower() not in USED_WORDS
-        )
-    ]
-
-    valid_all = [
-
-        w for w in WORDS
-
-        if (
-            valid_word(w)
-            and w.lower() not in USED_WORDS
-        )
-    ]
-
-    # FIRST MOVE
-
-    if len(USED_WORDS) == 0:
-
-        return STARTERS[CURRENT_MODE]
-
-    # COMMON FIRST
-
-    if valid_common:
-
-        freq = build_frequency(valid_common)
-
-        valid_common.sort(
-
-            key=lambda w: score_word(w, freq),
-
-            reverse=True
-        )
-
-        return valid_common[0].capitalize()
-
-    # FALLBACK
-
-    if valid_all:
-
-        freq = build_frequency(valid_all)
-
-        valid_all.sort(
-
-            key=lambda w: score_word(w, freq),
-
-            reverse=True
-        )
-
-        return valid_all[0].capitalize()
-
-    return None
-
-# =========================================
-# SEND GUESS
-# =========================================
-
-async def send_guess(chat_id, word):
-
-    USED_WORDS.add(word.lower())
-
-    await asyncio.sleep(
-
-        random.uniform(
-            MIN_DELAY,
-            MAX_DELAY
-        )
-    )
-
-    async with client.action(chat_id, "typing"):
-
-        await asyncio.sleep(
-            random.uniform(
-                0.05,
-                0.12
-            )
-        )
-
-        await client.send_message(
-            chat_id,
-            word
-        )
-
-    print(f"[SENT] {word}")
-
-# =========================================
-# AUTO LOOP NEW GAME
-# =========================================
-
-async def auto_new_game():
-
-    global ACTIVE_CHAT
-
-    await asyncio.sleep(
-        random.uniform(1.2, 2.0)
-    )
-
-    if (
-        ENABLED
-        and AUTO_LOOP
-        and ACTIVE_CHAT
-    ):
-
-        async with client.action(
-            ACTIVE_CHAT,
-            "typing"
-        ):
-
-            await asyncio.sleep(
-                random.uniform(
-                    0.3,
-                    0.8
-                )
-            )
-
-            await client.send_message(
-                ACTIVE_CHAT,
-                LOOP_COMMAND
-            )
-
-        print(f"[AUTO LOOP] {LOOP_COMMAND}")
-
-# =========================================
-# ENABLE
-# =========================================
-
-@client.on(
-    events.NewMessage(
-        outgoing=True,
-        pattern=r"^\.ws on$"
-    )
-)
-async def enable(event):
-
-    global ENABLED
-
-    ENABLED = True
-
-    await event.edit(
-        "✅ Solver Enabled"
-    )
-
-# =========================================
-# DISABLE
-# =========================================
-
-@client.on(
-    events.NewMessage(
-        outgoing=True,
-        pattern=r"^\.ws off$"
-    )
-)
-async def disable(event):
-
-    global ENABLED
-    global ACTIVE_CHAT
-    global AUTO_LOOP
-
-    ENABLED = False
-
-    AUTO_LOOP = False
-
-    ACTIVE_CHAT = None
-
-    reset_state()
-
-    await event.edit(
-        "❌ Solver Disabled"
-    )
-
-# =========================================
-# DELAY COMMAND
-# =========================================
-
-@client.on(
-    events.NewMessage(
-        outgoing=True,
-        pattern=r"^\.ws delay (\d+\.?\d*) (\d+\.?\d*)$"
-    )
-)
-async def delay(event):
-
-    global MIN_DELAY
-    global MAX_DELAY
-
-    MIN_DELAY = float(
-        event.pattern_match.group(1)
-    )
-
-    MAX_DELAY = float(
-        event.pattern_match.group(2)
-    )
-
-    await event.edit(
-        f"⚡ Delay Set: {MIN_DELAY}-{MAX_DELAY}"
-    )
-
-# =========================================
-# LOOP ON
-# =========================================
-
-@client.on(
-    events.NewMessage(
-        outgoing=True,
-        pattern=r"^\.ws loop on$"
-    )
-)
-async def loop_on(event):
-
-    global AUTO_LOOP
-
-    AUTO_LOOP = True
-
-    await event.edit(
-        "♻️ Auto Loop Enabled"
-    )
-
-# =========================================
-# LOOP OFF
-# =========================================
-
-@client.on(
-    events.NewMessage(
-        outgoing=True,
-        pattern=r"^\.ws loop off$"
-    )
-)
-async def loop_off(event):
-
-    global AUTO_LOOP
-
-    AUTO_LOOP = False
-
-    await event.edit(
-        "❌ Auto Loop Disabled"
-    )
-
-# =========================================
-# NEW GAME DETECT
-# =========================================
-
-@client.on(events.NewMessage(outgoing=True))
-async def detect_new_game(event):
-
-    global ACTIVE_CHAT
-    global LOOP_COMMAND
-
-    if not ENABLED:
-        return
-
-    text = event.raw_text.lower().strip()
-
-    VALID_COMMANDS = [
-
-        "/new",
-        "/new4",
-        "/new5",
-        "/new6",
-
-        "/new@wordseekbot",
-        "/new4@wordseekbot",
-        "/new5@wordseekbot",
-        "/new6@wordseekbot"
-    ]
-
-    if text not in VALID_COMMANDS:
-        return
-
-    LOOP_COMMAND = text
-
-    ACTIVE_CHAT = event.chat_id
-
-    reset_state()
-
-    # MODE
-
-    if "new4" in text:
-
-        load_mode(4)
-
-    elif "new6" in text:
-
-        load_mode(6)
-
-    else:
-
-        load_mode(5)
-
-    print(f"[NEW GAME] {ACTIVE_CHAT}")
-    print(f"[LOOP CMD] {LOOP_COMMAND}")
-
-# =========================================
-# MAIN SOLVER
-# =========================================
-
-@client.on(events.NewMessage)
-async def solver(event):
-
-    global LAST_GUESS
-
-    if not ENABLED:
-        return
-
-    if event.chat_id != ACTIVE_CHAT:
-        return
-
-    sender = await event.get_sender()
-
-    if not sender:
-        return
-
-    username = getattr(
-        sender,
-        "username",
-        ""
-    )
-
-    if not username:
-        return
-
-    if username.lower() != BOT_USERNAME:
-        return
-
-    text = event.raw_text
-
-    print("\n========== BOT ==========")
-    print(text)
-    print("=========================\n")
-
-    # GAME START
-
-    if "Game started!" in text:
-
-        first_guess = get_next_guess()
-
-        if first_guess:
-
-            await send_guess(
-                event.chat_id,
-                first_guess
-            )
-
-        return
-
-    # WIN
-
-    if "Congrats!" in text:
-
-        print("[WIN]")
-
-        reset_state()
-
-        asyncio.create_task(
-            auto_new_game()
-        )
-
-        return
-
-    # LOSE
-
-    if "Game Over!" in text:
-
-        print("[LOSE]")
-
-        reset_state()
-
-        asyncio.create_task(
-            auto_new_game()
-        )
-
-        return
-
-    # MODE DETECT
-
-    if "4-letter" in text:
-
-        load_mode(4)
-
-    elif "5-letter" in text:
-
-        load_mode(5)
-
-    elif "6-letter" in text:
-
-        load_mode(6)
-
-    # FEEDBACK
-
-    result = parse_feedback(text)
-
-    if not result:
-        return
-
-    guess, feedback = result
-
-    print("[GUESS]", guess)
-    print("[FEEDBACK]", feedback)
-
-    # DUPLICATE BLOCK
-
-    if guess == LAST_GUESS:
-        return
-
-    LAST_GUESS = guess
-
-    # APPLY FEEDBACK
-
-    apply_constraints(
-        guess,
-        feedback
-    )
-
-    print("[GREEN]", GREEN)
-    print("[YELLOW]", YELLOW)
-    print("[BLACK]", BLACK)
-
-    # NEXT WORD
-
-    next_guess = get_next_guess()
-
-    if not next_guess:
-
-        print("[NO WORD FOUND]")
-
-        return
-
-    # SEND
-
-    await send_guess(
-        event.chat_id,
-        next_guess
-    )
-
-# =========================================
-# START
-# =========================================
-
-load_mode(5)
-
-print("=================================")
-print("🚀 WORDSEEK USERBOT RUNNING")
-print("=================================")
-
-client.start()
-
-client.run_until_disconnected()
+        return True
+
+    def get_next_guess():
+        v_common = [w for w in client.ws_common if valid_word(w) and w.lower() not in client.ws_used]
+        v_all = [w for w in client.ws_words if valid_word(w) and w.lower() not in client.ws_used]
+        if len(client.ws_used) == 0: return STARTERS[client.ws_mode]
+        
+        freq_src = v_common if v_common else v_all
+        if not freq_src: return None
+        
+        freq = Counter()
+        for w in freq_src:
+            for char in set(w.lower()): freq[char] += 1
+        
+        freq_src.sort(key=lambda w: sum(freq[c] for c in set(w.lower())), reverse=True)
+        return freq_src[0].capitalize()
+
+    # --- COMMANDS (Saved Messages) ---
+    @client.on(events.NewMessage(chats='me', pattern=r"^\.ws (on|off)$"))
+    async def toggle(event):
+        client.ws_enabled = event.pattern_match.group(1) == "on"
+        await event.edit(f"{'✅' if client.ws_enabled else '❌'} **WordSeek Solver {'Enabled' if client.ws_enabled else 'Disabled'}**")
+
+    @client.on(events.NewMessage(chats='me', pattern=r"^\.ws loop (on|off)$"))
+    async def loop_toggle(event):
+        client.ws_loop = event.pattern_match.group(1) == "on"
+        await event.edit(f"{'♻️' if client.ws_loop else '❌'} **Auto Loop {'Enabled' if client.ws_loop else 'Disabled'}**")
+
+    # --- MAIN ENGINE ---
+    @client.on(events.NewMessage(outgoing=True))
+    async def detect_new_game(event):
+        if not client.ws_enabled: return
+        text = event.raw_text.lower().strip()
+        if "/new" in text:
+            client.ws_loop_cmd = text
+            client.ws_chat = event.chat_id
+            reset_state()
+            if "4" in text: load_mode(4)
+            elif "6" in text: load_mode(6)
+            else: load_mode(5)
+
+    @client.on(events.NewMessage)
+    async def solver(event):
+        if not client.ws_enabled or event.chat_id != client.ws_chat: return
+        sender = await event.get_sender()
+        if not sender or getattr(sender, "username", "").lower() != "wordseekbot": return
+        
+        text = event.raw_text
+        if "Game started!" in text:
+            guess = get_next_guess()
+            if guess:
+                client.ws_used.add(guess.lower())
+                await asyncio.sleep(random.uniform(client.ws_delay_min, client.ws_delay_max))
+                await client.send_message(event.chat_id, guess)
+            return
+
+        if "Congrats!" in text or "Game Over!" in text:
+            reset_state()
+            if client.ws_loop:
+                await asyncio.sleep(random.uniform(1.5, 2.5))
+                await client.send_message(client.ws_chat, client.ws_loop_cmd)
+            return
+
+        # Feedback Parsing
+        res = parse_feedback(text)
+        if not res: return
+        guess, feedback = res
+        if guess == client.ws_last_guess: return
+        client.ws_last_guess = guess
+        
+        apply_constraints(guess, feedback)
+        next_guess = get_next_guess()
+        if next_guess:
+            client.ws_used.add(next_guess.lower())
+            async with client.action(event.chat_id, "typing"):
+                await asyncio.sleep(random.uniform(client.ws_delay_min, client.ws_delay_max))
+                await client.send_message(event.chat_id, next_guess)
