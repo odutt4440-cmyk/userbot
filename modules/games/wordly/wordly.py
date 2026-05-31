@@ -1,177 +1,176 @@
-import pyautogui
 import time
 import requests
 import re
+import asyncio
 from collections import Counter
-from telethon import TelegramClient, events
+from telethon import events
 
 # =========================
-# TELEGRAM API
-# =========================
-api_id = 27309741
-api_hash = "YOUR_API_HASH"
-
-client = TelegramClient("scramble_session", api_id, api_hash)
-
-# =========================
-# CONFIG
-# =========================
-TARGET_CHAT_ID = -1002411036300
-
-ROUNDS = 20
-TYPING_SPEED = 0.000
-MIN_LEN = 8
-MAX_LEN = 12
-
-used_words = set()
-round_count = 0
-current_letters = None
-
-# =========================
-# LOAD DICTIONARY
+# LOAD DICTIONARY (Shared)
 # =========================
 def load_words():
-    print("Downloading common dictionary...")
-
+    # Dictionary loading is done once to save RAM across all users
     url = "https://raw.githubusercontent.com/dolph/dictionary/master/enable1.txt"
-    data = requests.get(url).text.splitlines()
+    try:
+        data = requests.get(url).text.splitlines()
+        valid = []
+        for w in data:
+            w = w.lower().strip()
+            if 8 <= len(w) <= 12 and w.isalpha():
+                valid.append((w, Counter(w)))
+        return valid
+    except Exception as e:
+        print(f"Error loading dictionary: {e}")
+        return []
 
-    valid = []
-
-    for w in data:
-
-        w = w.lower().strip()
-
-        if MIN_LEN <= len(w) <= MAX_LEN and w.isalpha():
-
-            valid.append(
-                (w, Counter(w))
-            )
-
-    print("Loaded:", len(valid))
-
-    return valid
-
-
-words = load_words()
+WORDS_DB = load_words()
 
 # =========================
-# SOLVER
-# repeated letters allowed
+# THE MODULE REGISTER
 # =========================
-def solve(letters):
+def register(client):
+    """
+    This function is called by the session manager for each user.
+    'client' is the individual user's account session.
+    """
 
-    allowed = set(letters.lower())
+    # --- CONFIG (Per User State) ---
+    client.w_rounds_limit = 20
+    client.w_target_chat = None
+    client.w_enabled = True
+    client.w_loop = False
+    client.w_delay = 0.0 
 
-    candidates = []
+    client.w_used_words = set()
+    client.w_round_count = 0
+    client.w_current_letters = None
 
-    for word, wc in words:
+    # --- SOLVER ---
+    def solve(letters):
+        allowed = set(letters.lower())
+        candidates = []
+        for word, wc in WORDS_DB:
+            if word in client.w_used_words:
+                continue
+            if all(c in allowed for c in word):
+                candidates.append(word)
+        
+        if not candidates:
+            return None
 
-        if word in used_words:
-            continue
+        candidates.sort(key=len, reverse=True)
+        best = candidates[0]
+        client.w_used_words.add(best)
+        return best
 
-        if all(
-            c in allowed
-            for c in word
-        ):
-            candidates.append(word)
+    # --- LETTER EXTRACTOR ---
+    def extract_letters(text):
+        m = re.search(r'([A-Z](?:\s*,\s*[A-Z])+)', text.upper())
+        if not m:
+            return None
+        return "".join(re.findall(r"[A-Z]", m.group(1)))
 
-    if not candidates:
-        return None
-
-    candidates.sort(
-        key=len,
-        reverse=True
-    )
-
-    best = candidates[0]
-
-    used_words.add(best)
-
-    return best
-
-
-# =========================
-# EXTRACT:
-# A,T,H,O,D,R,S,E
-# =========================
-def extract_letters(text):
-
-    m = re.search(
-        r'([A-Z](?:\s*,\s*[A-Z])+)',
-        text.upper()
-    )
-
-    if not m:
-        return None
-
-    letters = m.group(1)
-
-    return "".join(
-        re.findall(r"[A-Z]", letters)
-    )
-
-# =========================
-# TELEGRAM
-# =========================
-@client.on(events.NewMessage(chats=TARGET_CHAT_ID))
-async def handler(event):
-
-    global round_count
-    global current_letters
-    global used_words
-
-    msg = event.message.message
-
-    if not msg:
-        return
-
-    text = msg.upper()
-
-    # New game starts
-    if "TOTAL: 0/20" in text:
-
-        current_letters = extract_letters(msg)
-
-        if not current_letters:
+    # =========================
+    # SAVED MESSAGES COMMANDS
+    # =========================
+    @client.on(events.NewMessage(chats='me'))
+    async def control_panel(event):
+        cmd = event.raw_text.lower().split()
+        if not cmd:
             return
 
-        round_count = 0
-        used_words.clear()
+        if cmd[0] == ".won":
+            client.w_enabled = True
+            await event.edit("✅ **Wordly Enabled**")
 
-        print("\n🎮 NEW GAME")
-        print("Letters:", current_letters)
+        elif cmd[0] == ".woff":
+            client.w_enabled = False
+            await event.edit("❌ **Wordly Disabled**")
 
-    if not current_letters:
-        return
+        elif cmd[0] == ".wloop":
+            if len(cmd) > 1:
+                client.w_loop = (cmd[1] == "on")
+                await event.edit(f"🔄 **Loop:** {'ON' if client.w_loop else 'OFF'}")
 
-    if round_count >= ROUNDS:
+        elif cmd[0] == ".wdelay":
+            if len(cmd) > 1:
+                try:
+                    client.w_delay = float(cmd[1])
+                    await event.edit(f"⚡ **Delay Set To:** {client.w_delay}s")
+                except: pass
 
-        print("\n✅ Finished 20 rounds")
+        elif cmd[0] == ".wstatus":
+            status = (
+                "📊 **WORDLY STATUS**\n\n"
+                f"**Target:** `{client.w_target_chat}`\n"
+                f"**Enabled:** `{client.w_enabled}`\n"
+                f"**Loop:** `{client.w_loop}`\n"
+                f"**Delay:** `{client.w_delay}`\n"
+                f"**Rounds:** `{client.w_round_count}/{client.w_rounds_limit}`"
+            )
+            await event.edit(status)
 
-        current_letters = None
-        return
+    # =========================
+    # AUTO TARGET DETECTION
+    # =========================
+    @client.on(events.NewMessage(outgoing=True))
+    async def detect_target(event):
+        text = event.raw_text.strip().lower()
+        if text in ["/new", "/new@wordgamezbot"]:
+            client.w_target_chat = event.chat_id
+            client.w_round_count = 0
+            client.w_current_letters = None
+            client.w_used_words.clear()
+            await client.send_message("me", f"🎯 **Target selected:** `{event.chat_id}`\nReady to solve Wordly rounds.")
 
-    word = solve(current_letters)
+    # =========================
+    # GAME HANDLER
+    # =========================
+    @client.on(events.NewMessage)
+    async def game_handler(event):
+        if not client.w_enabled or client.w_target_chat is None:
+            return
 
-    if not word:
-        print("No word left")
+        if event.chat_id != client.w_target_chat:
+            return
 
-        current_letters = None
-        return
+        msg = event.raw_text
+        if not msg:
+            return
+        text = msg.upper()
 
-    round_count += 1
+        # NEW GAME DETECTION
+        if "TOTAL: 0/20" in text:
+            client.w_current_letters = extract_letters(msg)
+            if not client.w_current_letters:
+                return
+            client.w_round_count = 0
+            client.w_used_words.clear()
+            return
 
-    print(f"\n🔥 Round {round_count}/{ROUNDS}")
-    print("Typing:", word)
+        # GAME OVER DETECTION
+        if "GAME OVER" in text or "TOTAL: 20/20" in text:
+            client.w_current_letters = None
+            if client.w_loop:
+                await asyncio.sleep(3)
+                await client.send_message(client.w_target_chat, "/new@WordgamezBot")
+            return
 
-    for ch in word:
-        pyautogui.write(ch)
-        time.sleep(TYPING_SPEED)
+        # SOLVING LOGIC
+        if not client.w_current_letters or "TOTAL:" not in text:
+            return
 
-    pyautogui.press("enter")
+        if client.w_round_count >= client.w_rounds_limit:
+            return
 
-print("🚀 Bot started")
+        word = solve(client.w_current_letters)
+        if not word:
+            return
 
-client.start()
-client.run_until_disconnected()
+        client.w_round_count += 1
+        
+        # Simulating human behavior
+        async with client.action(event.chat_id, 'typing'):
+            if client.w_delay > 0:
+                await asyncio.sleep(client.w_delay)
+            await client.send_message(event.chat_id, word)
