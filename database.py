@@ -7,24 +7,50 @@ log = logging.getLogger(__name__)
 
 # --- ULTRA FAST MONGODB CONNECTION ---
 try:
+    # Fix: Removed tlsAllowInvalidCertificates because tlsInsecure covers it
     client = AsyncIOMotorClient(
         MONGO_URL,
-        tlsAllowInvalidCertificates=True,
-        tlsInsecure=True,
+        tlsInsecure=True, 
         serverSelectionTimeoutMS=5000, 
         connectTimeoutMS=5000,
-        maxPoolSize=50
+        maxPoolSize=50,
+        retryWrites=False
     )
     db = client["UserbotCommunity"]
     
     users_db = db["users"]
     subs_db = db["subscriptions"]
     state_db = db["game_state"]
-    banned_db = db["banned_users"] # New collection for bans
+    banned_db = db["banned_users"]
     
-    log.info("✅ Async MongoDB Connected (SaaS Admin Logic Active)")
+    log.info("✅ Async MongoDB Connected Successfully!")
 except Exception as e:
     log.error(f"❌ MongoDB Connection Error: {e}")
+
+# --- USER SESSION FUNCTIONS (RE-ADDED) ---
+
+async def save_user_session(user_id, string_session):
+    """User ki string session save ya update karne ke liye"""
+    try:
+        await users_db.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "session": string_session, 
+                "last_login": datetime.datetime.now()
+            }},
+            upsert=True
+        )
+    except Exception as e:
+        log.error(f"DB Error (save_session): {e}")
+
+async def get_user_session(user_id):
+    """DB se user ki string nikalne ke liye"""
+    try:
+        user = await users_db.find_one({"user_id": user_id})
+        return user.get("session") if user else None
+    except Exception as e:
+        log.error(f"DB Error (get_session): {e}")
+        return None
 
 # --- BAN SYSTEM ---
 
@@ -48,7 +74,7 @@ async def is_subscribed(user_id):
     if user_id == ADMIN_ID:
         return True
     
-    # Banned users can't use the bot even if they paid
+    # Banned users can't use the bot
     if await is_banned(user_id):
         return False
 
@@ -63,12 +89,10 @@ async def is_subscribed(user_id):
     return False
 
 async def add_subscription(user_id, days=0, hours=0, minutes=0):
-    """Ab tu granular time add kar sakta hai (days, hours, minutes)"""
     try:
         user_sub = await subs_db.find_one({"user_id": user_id})
         now = datetime.datetime.now()
         
-        # Agar sub active hai toh purani date ke aage add hoga, warna aaj se
         if user_sub and user_sub.get("expiry_date") and user_sub.get("expiry_date") > now:
             base_date = user_sub.get("expiry_date")
         else:
@@ -87,19 +111,15 @@ async def add_subscription(user_id, days=0, hours=0, minutes=0):
         return None
 
 async def cancel_subscription(user_id):
-    """User ki subscription turant khatam karne ke liye"""
     await subs_db.update_one({"user_id": user_id}, {"$set": {"status": "expired", "expiry_date": datetime.datetime.now()}})
 
 async def transfer_subscription(from_id, to_id):
-    """Ek account se dusre account me sub transfer karna"""
     source = await subs_db.find_one({"user_id": from_id})
     if not source or source.get("status") != "active":
         return False, "Source user has no active subscription."
     
     expiry = source.get("expiry_date")
-    # Source ko band karo
     await cancel_subscription(from_id)
-    # Target ko active karo
     await subs_db.update_one(
         {"user_id": to_id},
         {"$set": {"expiry_date": expiry, "status": "active"}},
@@ -108,7 +128,6 @@ async def transfer_subscription(from_id, to_id):
     return True, "Successfully transferred."
 
 async def get_sub_info(user_id):
-    """Status aur bacha hua time check karne ke liye"""
     user_sub = await subs_db.find_one({"user_id": user_id})
     if not user_sub:
         return "No Plan", None
@@ -122,7 +141,7 @@ async def get_sub_info(user_id):
     return "Expired", None
 
 # --- GAME STATE FUNCTIONS ---
-# (Wahi purane functions bina change ke)
+
 async def set_game_state(user_id, game_name, data):
     try:
         await state_db.update_one({"user_id": user_id, "game": game_name}, {"$set": {"data": data, "updated_at": datetime.datetime.now()}}, upsert=True)
