@@ -25,4 +25,4 @@ LOG_GROUP = int(os.getenv("LOG_GROUP", "0"))
 
 # --- Bot Customization ---
 # Welcome Pic ka URL (Ya local path)
-START_PIC = os.getenv("START_PIC", "https://telegra.ph/file/your_image_path.jpg")
+START_PIC = assets/start.png
