@@ -1,0 +1,8 @@
+telethon
+motor
+pymongo[srv]
+python-dotenv
+cryptography
+requests
+aiohttp
+pillow
