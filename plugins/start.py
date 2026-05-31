@@ -1,10 +1,10 @@
 import os
-from main import bot
+from bot_instance import bot # <--- Changed from 'main' to 'bot_instance'
 from telethon import events, Button
 from config import START_PIC, ADMIN_ID
 
 # --- 1. MAIN MENU LOGIC ---
-# Isko alag function banaya taaki /start aur Back button dono isse use kar sakein
+# Function to handle both /start command and Back button
 async def send_start_menu(event, edit=False):
     welcome_text = (
         "👋 **Welcome to Userbot Community!**\n\n"
@@ -24,8 +24,7 @@ async def send_start_menu(event, edit=False):
         # Check if photo exists locally
         if START_PIC and os.path.exists(START_PIC):
             if edit:
-                # Agar button click karke aaye hain toh edit nahi kar sakte (photo message)
-                # Isliye naya photo message bhejenge aur purana delete karenge
+                # Send new file and delete old text menu for clean transition
                 await bot.send_file(event.chat_id, START_PIC, caption=welcome_text, buttons=buttons)
             else:
                 await bot.send_file(event.chat_id, START_PIC, caption=welcome_text, buttons=buttons)
@@ -45,6 +44,8 @@ async def send_start_menu(event, edit=False):
 # Command Handler
 @bot.on(events.NewMessage(pattern=r'(?i)^/start'))
 async def start_handler(event):
+    # Debug print to confirm the bot sees the message in terminal
+    print(f"DEBUG: Start command received from {event.sender_id}")
     await send_start_menu(event)
 
 # --- 2. MODULES MENU ---
@@ -85,7 +86,7 @@ async def callback_handler(event):
     if data == "start_back":
         await send_start_menu(event, edit=True)
         try:
-            await event.delete() # Purana menu delete for clean look
+            await event.delete() 
         except:
             pass
 
