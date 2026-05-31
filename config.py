@@ -25,4 +25,4 @@ LOG_GROUP = int(os.getenv("LOG_GROUP", "0"))
 
 # --- Bot Customization ---
 # Welcome Pic ka URL (Ya local path)
-START_PIC = assets/start.png
+START_PIC = "assets/start.png"
