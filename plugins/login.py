@@ -1,4 +1,4 @@
-from main import bot
+from bot_instance import bot 
 from telethon import events, Button
 from database import save_user_session, get_user_session
 
