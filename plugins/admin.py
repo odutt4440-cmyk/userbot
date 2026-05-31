@@ -1,4 +1,4 @@
-from main import bot
+from bot_instance import bot 
 from telethon import events
 from config import ADMIN_ID
 from database import add_subscription, users_db, subs_db
