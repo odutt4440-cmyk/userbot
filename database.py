@@ -5,10 +5,13 @@ from config import MONGO_URL
 
 log = logging.getLogger(__name__)
 
-# MongoDB Connection
-# Humne motor use kiya hai jo asynchronous hai (Telethon ke liye best)
+# MongoDB Connection Setup
 try:
-    client = AsyncIOMotorClient(MONGO_URL)
+    # Adding SSL fix to prevent handshake timeout and bot freezing
+    client = AsyncIOMotorClient(
+        MONGO_URL,
+        tlsAllowInvalidCertificates=True # <--- SSL Handshake Fix
+    )
     db = client["UserbotCommunity"]
     
     # Collections
@@ -16,7 +19,7 @@ try:
     subs_db = db["subscriptions"]
     state_db = db["game_state"]
     
-    log.info("✅ MongoDB Connection Established.")
+    log.info("✅ MongoDB Connection Established with SSL Fix.")
 except Exception as e:
     log.error(f"❌ MongoDB Connection Error: {e}")
 
@@ -35,25 +38,30 @@ async def save_user_session(user_id, string_session):
 
 async def get_user_session(user_id):
     """DB se user ki string nikalne ke liye"""
-    user = await users_db.find_one({"user_id": user_id})
-    if user and "session" in user:
-        return user["session"]
+    try:
+        user = await users_db.find_one({"user_id": user_id})
+        if user and "session" in user:
+            return user["session"]
+    except Exception as e:
+        log.error(f"Error fetching session: {e}")
     return None
 
 # --- SUBSCRIPTION FUNCTIONS ---
 
 async def is_subscribed(user_id):
     """Check karega ki user active hai ya expired"""
-    user_sub = await subs_db.find_one({"user_id": user_id})
-    if user_sub and user_sub.get("status") == "active":
-        expiry = user_sub.get("expiry_date")
-        if expiry and expiry > datetime.datetime.now():
-            return True
+    try:
+        user_sub = await subs_db.find_one({"user_id": user_id})
+        if user_sub and user_sub.get("status") == "active":
+            expiry = user_sub.get("expiry_date")
+            if expiry and expiry > datetime.datetime.now():
+                return True
+    except Exception as e:
+        log.error(f"Error checking subscription: {e}")
     return False
 
 async def add_subscription(user_id, days=30):
     """Subscription activate ya renew karne ke liye"""
-    # Agar pehle se active hai toh purani expiry mein add karenge, warna aaj se
     user_sub = await subs_db.find_one({"user_id": user_id})
     now = datetime.datetime.now()
     
@@ -85,5 +93,9 @@ async def set_game_state(user_id, game_name, data):
     )
 
 async def get_game_state(user_id, game_name):
-    state = await state_db.find_one({"user_id": user_id, "game": game_name})
-    return state["data"] if state else {}
+    try:
+        state = await state_db.find_one({"user_id": user_id, "game": game_name})
+        return state["data"] if state else {}
+    except Exception as e:
+        log.error(f"Error getting game state: {e}")
+        return {}
