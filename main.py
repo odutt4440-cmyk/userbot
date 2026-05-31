@@ -2,8 +2,9 @@ import logging
 import os
 import glob
 import importlib.util
-from telethon import TelegramClient
-from config import API_ID, API_HASH, BOT_TOKEN, LOG_GROUP # LOG_GROUP add kiya
+import asyncio
+from telethon import TelegramClient, functions, types # added functions/types for commands
+from config import API_ID, API_HASH, BOT_TOKEN, LOG_GROUP
 
 # 1. Logging Setup
 logging.basicConfig(
@@ -26,6 +27,7 @@ def load_plugins():
         plugin_name = os.path.basename(name).replace(".py", "")
         spec = importlib.util.spec_from_file_location(f"plugins.{plugin_name}", name)
         module = importlib.util.module_from_spec(spec)
+        # Is tarah load karne se @bot.on sahi se register hote hain
         spec.loader.exec_module(module)
         log.info(f"Successfully loaded plugin: {plugin_name}")
 
@@ -34,7 +36,23 @@ async def start_bot():
     print("   Userbot Community Bot Starting...   ")
     print("---------------------------------------")
     
+    # Bot Start
     await bot.start(bot_token=BOT_TOKEN)
+
+    # --- SET BOT COMMANDS VIA CODE ---
+    try:
+        await bot(functions.bots.SetBotCommandsRequest(
+            scope=types.BotCommandScopeDefault(),
+            lang_code='en',
+            commands=[
+                types.BotCommand(command='start', description='Start the bot and see menu'),
+                types.BotCommand(command='help', description='Rules and Help info'),
+                types.BotCommand(command='modules', description='Explore userbot modules')
+            ]
+        ))
+        log.info("Successfully synced bot commands to Telegram.")
+    except Exception as e:
+        log.error(f"Failed to sync commands: {e}")
 
     # --- LOGGER PART START ---
     if LOG_GROUP:
@@ -44,6 +62,7 @@ async def start_bot():
             log.error(f"Failed to send startup log: {e}")
     # --- LOGGER PART END ---
     
+    # Load plugins after bot is fully started
     load_plugins()
     
     print("---------------------------------------")
@@ -53,7 +72,6 @@ async def start_bot():
     await bot.run_until_disconnected()
 
 if __name__ == "__main__":
-    import asyncio
     try:
         loop = asyncio.get_event_loop()
         loop.run_until_complete(start_bot())
