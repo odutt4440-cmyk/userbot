@@ -1,8 +1,8 @@
 telethon
-motor
-pymongo[srv]
+aiosqlite
 python-dotenv
 cryptography
 requests
 aiohttp
 pillow
+wordfreq
