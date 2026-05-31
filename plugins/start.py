@@ -3,10 +3,9 @@ from main import bot
 from telethon import events, Button
 from config import START_PIC, ADMIN_ID
 
-# --- 1. MAIN MENU (Start Command) ---
-@bot.on(events.NewMessage(pattern=r'(?i)^/start'))
-async def start(event):
-    # English Welcome Text
+# --- 1. MAIN MENU LOGIC ---
+# Isko alag function banaya taaki /start aur Back button dono isse use kar sakein
+async def send_start_menu(event, edit=False):
     welcome_text = (
         "👋 **Welcome to Userbot Community!**\n\n"
         "I am here to help you transform your Telegram account into a powerful "
@@ -15,27 +14,40 @@ async def start(event):
         "Navigate using the buttons below to get started. 👇"
     )
     
-    # Buttons logic
     buttons = [
         [Button.inline("⚙️ Modules", data="modules_main")],
         [Button.inline("📜 Rules", data="rules"), Button.inline("👨‍💻 Developer", data="dev_info")],
         [Button.url("🔑 String Gen", "https://t.me/YourStringGenBot")] 
     ]
-    
-    try:
-        # Sending Photo with English Caption
-        await bot.send_file(
-            event.chat_id,
-            START_PIC,
-            caption=welcome_text,
-            buttons=buttons
-        )
-    except Exception as e:
-        # Fallback to text if image fails
-        await event.respond(welcome_text, buttons=buttons)
-        print(f"Error loading start pic: {e}")
 
-# --- 2. MODULES MENU (Main Sub-Menu) ---
+    try:
+        # Check if photo exists locally
+        if START_PIC and os.path.exists(START_PIC):
+            if edit:
+                # Agar button click karke aaye hain toh edit nahi kar sakte (photo message)
+                # Isliye naya photo message bhejenge aur purana delete karenge
+                await bot.send_file(event.chat_id, START_PIC, caption=welcome_text, buttons=buttons)
+            else:
+                await bot.send_file(event.chat_id, START_PIC, caption=welcome_text, buttons=buttons)
+        else:
+            # Fallback to text if image is missing
+            if edit:
+                await event.edit(welcome_text, buttons=buttons)
+            else:
+                await event.respond(welcome_text, buttons=buttons)
+    except Exception as e:
+        print(f"Error in Start Menu: {e}")
+        if edit:
+            await event.edit(welcome_text, buttons=buttons)
+        else:
+            await event.respond(welcome_text, buttons=buttons)
+
+# Command Handler
+@bot.on(events.NewMessage(pattern=r'(?i)^/start'))
+async def start_handler(event):
+    await send_start_menu(event)
+
+# --- 2. MODULES MENU ---
 @bot.on(events.CallbackQuery(data="modules_main"))
 async def modules_main(event):
     text = (
@@ -50,7 +62,7 @@ async def modules_main(event):
     ]
     await event.edit(text, buttons=buttons)
 
-# --- 3. GAMES MENU (Specific Games) ---
+# --- 3. GAMES MENU ---
 @bot.on(events.CallbackQuery(data="games_ub"))
 async def games_menu(event):
     text = (
@@ -65,15 +77,17 @@ async def games_menu(event):
     ]
     await event.edit(text, buttons=buttons)
 
-# --- 4. CALLBACK FOR BACK BUTTONS & INFO ---
+# --- 4. CALLBACK HANDLERS ---
 @bot.on(events.CallbackQuery)
 async def callback_handler(event):
     data = event.data.decode("utf-8")
     
     if data == "start_back":
-        # Returns to the main start menu
-        await start(event) 
-        await event.delete() 
+        await send_start_menu(event, edit=True)
+        try:
+            await event.delete() # Purana menu delete for clean look
+        except:
+            pass
 
     elif data == "rules":
         rules_text = (
