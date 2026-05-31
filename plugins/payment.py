@@ -1,4 +1,4 @@
-from main import bot
+from bot_instance import bot 
 from telethon import events, Button
 from config import ADMIN_ID, START_PIC
 from database import add_subscription
