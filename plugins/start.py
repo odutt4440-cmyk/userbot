@@ -17,14 +17,15 @@ async def send_start_menu(event, edit=False):
     buttons = [
         [Button.inline("⚙️ Modules", data="modules_main")],
         [Button.inline("📜 Rules", data="rules"), Button.inline("👨‍💻 Developer", data="dev_info")],
-        [Button.url("🔑 String Gen", "https://t.me/YourStringGenBot")] 
+        # CHANGED: Now triggers internal string generator instead of a dead link
+        [Button.inline("🔑 Generate String", data="gen_string_internal")] 
     ]
 
     try:
         # Check if photo exists locally
         if START_PIC and os.path.exists(START_PIC):
             if edit:
-                # Send new file and delete old text menu for clean transition
+                # Send new file for clean transition
                 await bot.send_file(event.chat_id, START_PIC, caption=welcome_text, buttons=buttons)
             else:
                 await bot.send_file(event.chat_id, START_PIC, caption=welcome_text, buttons=buttons)
