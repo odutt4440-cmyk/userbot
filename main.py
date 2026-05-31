@@ -5,7 +5,8 @@ import importlib
 import asyncio
 from telethon import functions, types
 from config import API_ID, API_HASH, BOT_TOKEN, LOG_GROUP
-from bot_instance import bot # <--- Bot ab yahan se aayega
+from bot_instance import bot 
+from database import init_db # <--- Database initialization import kiya
 
 # 1. Logging Setup
 logging.basicConfig(
@@ -22,17 +23,24 @@ def load_plugins():
         if name.endswith("__init__.py"):
             continue
             
-        # Proper way to import modules so that decorators (@bot.on) work
         plugin_name = os.path.basename(name).replace(".py", "")
-        importlib.import_module(f"plugins.{plugin_name}")
-        log.info(f"Successfully loaded plugin: {plugin_name}")
+        try:
+            importlib.import_module(f"plugins.{plugin_name}")
+            log.info(f"Successfully loaded plugin: {plugin_name}")
+        except Exception as e:
+            log.error(f"Failed to load plugin {plugin_name}: {e}")
 
 async def start_bot():
     print("---------------------------------------")
     print("   Userbot Community Bot Starting...   ")
     print("---------------------------------------")
     
-    # Bot Start using the instance from bot_instance.py
+    # 🔥 STEP 1: INITIALIZE DATABASE (Sabse Pehle)
+    # Ye step tables create karega taaki 'no such table' error na aaye
+    await init_db()
+    log.info("SQLite Database initialized.")
+
+    # 🔥 STEP 2: START BOT
     await bot.start(bot_token=BOT_TOKEN)
 
     # --- SET BOT COMMANDS VIA CODE ---
@@ -53,12 +61,12 @@ async def start_bot():
     # --- LOGGER PART START ---
     if LOG_GROUP:
         try:
-            await bot.send_message(LOG_GROUP, "🚀 **Userbot Community Bot Started Successfully!**\n\nAll plugins are loaded and the engine is ready.")
+            await bot.send_message(LOG_GROUP, "🚀 **Userbot Community Bot Started Successfully!**\n\nDatabase: `SQLite (Local)`\nStatus: `Running`")
         except Exception as e:
             log.error(f"Failed to send startup log: {e}")
     # --- LOGGER PART END ---
     
-    # Load plugins after bot is fully started
+    # 🔥 STEP 3: LOAD PLUGINS
     load_plugins()
     
     print("---------------------------------------")
