@@ -1,10 +1,11 @@
 import logging
 import os
 import glob
-import importlib.util
+import importlib
 import asyncio
-from telethon import TelegramClient, functions, types # added functions/types for commands
+from telethon import functions, types
 from config import API_ID, API_HASH, BOT_TOKEN, LOG_GROUP
+from bot_instance import bot # <--- Bot ab yahan se aayega
 
 # 1. Logging Setup
 logging.basicConfig(
@@ -13,10 +14,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# 2. Bot Client Initialize
-bot = TelegramClient('bot_session', API_ID, API_HASH)
-
-# 3. Plugin Loader Function
+# 2. Plugin Loader Function
 def load_plugins():
     path = "plugins/*.py"
     files = glob.glob(path)
@@ -24,11 +22,9 @@ def load_plugins():
         if name.endswith("__init__.py"):
             continue
             
+        # Proper way to import modules so that decorators (@bot.on) work
         plugin_name = os.path.basename(name).replace(".py", "")
-        spec = importlib.util.spec_from_file_location(f"plugins.{plugin_name}", name)
-        module = importlib.util.module_from_spec(spec)
-        # Is tarah load karne se @bot.on sahi se register hote hain
-        spec.loader.exec_module(module)
+        importlib.import_module(f"plugins.{plugin_name}")
         log.info(f"Successfully loaded plugin: {plugin_name}")
 
 async def start_bot():
@@ -36,7 +32,7 @@ async def start_bot():
     print("   Userbot Community Bot Starting...   ")
     print("---------------------------------------")
     
-    # Bot Start
+    # Bot Start using the instance from bot_instance.py
     await bot.start(bot_token=BOT_TOKEN)
 
     # --- SET BOT COMMANDS VIA CODE ---
