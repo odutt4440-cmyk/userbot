@@ -1,5 +1,5 @@
 import os
-from bot_instance import bot # <--- Changed from 'main' to 'bot_instance'
+from bot_instance import bot # <--- Using shared bot instance
 from telethon import events, Button
 from config import START_PIC, ADMIN_ID
 
@@ -17,7 +17,7 @@ async def send_start_menu(event, edit=False):
     buttons = [
         [Button.inline("⚙️ Modules", data="modules_main")],
         [Button.inline("📜 Rules", data="rules"), Button.inline("👨‍💻 Developer", data="dev_info")],
-        # CHANGED: Now triggers internal string generator instead of a dead link
+        # Triggers internal string generator
         [Button.inline("🔑 Generate String", data="gen_string_internal")] 
     ]
 
@@ -25,7 +25,6 @@ async def send_start_menu(event, edit=False):
         # Check if photo exists locally
         if START_PIC and os.path.exists(START_PIC):
             if edit:
-                # Send new file for clean transition
                 await bot.send_file(event.chat_id, START_PIC, caption=welcome_text, buttons=buttons)
             else:
                 await bot.send_file(event.chat_id, START_PIC, caption=welcome_text, buttons=buttons)
@@ -42,16 +41,16 @@ async def send_start_menu(event, edit=False):
         else:
             await event.respond(welcome_text, buttons=buttons)
 
-# Command Handler
+# Command Handler for /start
 @bot.on(events.NewMessage(pattern=r'(?i)^/start'))
 async def start_handler(event):
-    # Debug print to confirm the bot sees the message in terminal
     print(f"DEBUG: Start command received from {event.sender_id}")
     await send_start_menu(event)
 
-# --- 2. MODULES MENU ---
-@bot.on(events.CallbackQuery(data="modules_main"))
-async def modules_main(event):
+# --- 2. MODULES MENU (Command + Button) ---
+
+# Logic for Modules Menu (English Quotes)
+async def send_modules_menu(event, edit=False):
     text = (
         "📂 **Select Module Type**\n\n"
         "Choose a category to explore our premium userbot modules. "
@@ -62,7 +61,20 @@ async def modules_main(event):
         [Button.inline("🎮 Games Userbot", data="games_ub")],
         [Button.inline("🔙 Back to Menu", data="start_back")]
     ]
-    await event.edit(text, buttons=buttons)
+    if edit:
+        await event.edit(text, buttons=buttons)
+    else:
+        await event.respond(text, buttons=buttons)
+
+# Handler for /modules command
+@bot.on(events.NewMessage(pattern=r'(?i)^/modules'))
+async def modules_cmd_handler(event):
+    await send_modules_menu(event, edit=False)
+
+# Handler for Modules Button
+@bot.on(events.CallbackQuery(data="modules_main"))
+async def modules_callback_handler(event):
+    await send_modules_menu(event, edit=True)
 
 # --- 3. GAMES MENU ---
 @bot.on(events.CallbackQuery(data="games_ub"))
