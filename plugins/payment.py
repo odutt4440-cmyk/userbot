@@ -38,7 +38,7 @@ async def receive_screenshot(event):
             "🔔 **New Payment Request!**\n\n"
             f"👤 User: {event.sender.first_name}\n"
             f"🆔 ID: `{user_id}`\n\n"
-            "Kya aap is payment ko approve karna chahte hain?"
+            "do u want to approve this payment"
         )
         
         # Admin ko photo bhejna Approval button ke saath
