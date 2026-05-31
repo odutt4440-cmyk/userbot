@@ -1,71 +1,68 @@
+import aiosqlite
 import datetime
 import logging
-from motor.motor_asyncio import AsyncIOMotorClient
-from config import MONGO_URL, ADMIN_ID
+import json
+import os
+from config import ADMIN_ID
 
 log = logging.getLogger(__name__)
+DB_FILE = "community.db"
 
-# --- ULTRA FAST MONGODB CONNECTION ---
-try:
-    # Fix: Removed tlsAllowInvalidCertificates because tlsInsecure covers it
-    client = AsyncIOMotorClient(
-        MONGO_URL,
-        tlsInsecure=True, 
-        serverSelectionTimeoutMS=5000, 
-        connectTimeoutMS=5000,
-        maxPoolSize=50,
-        retryWrites=False
-    )
-    db = client["UserbotCommunity"]
-    
-    users_db = db["users"]
-    subs_db = db["subscriptions"]
-    state_db = db["game_state"]
-    banned_db = db["banned_users"]
-    
-    log.info("✅ Async MongoDB Connected Successfully!")
-except Exception as e:
-    log.error(f"❌ MongoDB Connection Error: {e}")
+# --- DB INITIALIZATION ---
+# Is function ko hum main.py me call karenge start hote hi
+async def init_db():
+    async with aiosqlite.connect(DB_FILE) as db:
+        # Users Table
+        await db.execute('''CREATE TABLE IF NOT EXISTS users 
+            (user_id INTEGER PRIMARY KEY, session TEXT, last_login TEXT)''')
+        
+        # Subscriptions Table
+        await db.execute('''CREATE TABLE IF NOT EXISTS subscriptions 
+            (user_id INTEGER PRIMARY KEY, status TEXT, expiry_date TEXT)''')
+        
+        # Game State Table
+        await db.execute('''CREATE TABLE IF NOT EXISTS game_state 
+            (user_id INTEGER, game_name TEXT, data TEXT, PRIMARY KEY (user_id, game_name))''')
+        
+        # Ban Table
+        await db.execute('''CREATE TABLE IF NOT EXISTS banned 
+            (user_id INTEGER PRIMARY KEY, banned_at TEXT)''')
+        
+        await db.commit()
+    log.info("✅ SQLite Database Initialized (Local Fast Mode)")
 
-# --- USER SESSION FUNCTIONS (RE-ADDED) ---
+# --- USER SESSION FUNCTIONS ---
 
 async def save_user_session(user_id, string_session):
-    """User ki string session save ya update karne ke liye"""
-    try:
-        await users_db.update_one(
-            {"user_id": user_id},
-            {"$set": {
-                "session": string_session, 
-                "last_login": datetime.datetime.now()
-            }},
-            upsert=True
-        )
-    except Exception as e:
-        log.error(f"DB Error (save_session): {e}")
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute('''INSERT OR REPLACE INTO users (user_id, session, last_login) 
+            VALUES (?, ?, ?)''', (user_id, string_session, datetime.datetime.now().isoformat()))
+        await db.commit()
 
 async def get_user_session(user_id):
-    """DB se user ki string nikalne ke liye"""
-    try:
-        user = await users_db.find_one({"user_id": user_id})
-        return user.get("session") if user else None
-    except Exception as e:
-        log.error(f"DB Error (get_session): {e}")
-        return None
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT session FROM users WHERE user_id = ?', (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
 
 # --- BAN SYSTEM ---
 
 async def ban_user(user_id):
-    """User ko bot se block karne ke liye"""
-    await banned_db.update_one({"user_id": user_id}, {"$set": {"banned_at": datetime.datetime.now()}}, upsert=True)
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute('INSERT OR REPLACE INTO banned (user_id, banned_at) VALUES (?, ?)', 
+            (user_id, datetime.datetime.now().isoformat()))
+        await db.commit()
 
 async def unban_user(user_id):
-    """User ko unblock karne ke liye"""
-    await banned_db.delete_one({"user_id": user_id})
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute('DELETE FROM banned WHERE user_id = ?', (user_id,))
+        await db.commit()
 
 async def is_banned(user_id):
-    """Check karega user block hai ya nahi"""
-    user = await banned_db.find_one({"user_id": user_id})
-    return True if user else False
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT user_id FROM banned WHERE user_id = ?', (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return True if row else False
 
 # --- SUBSCRIPTION FUNCTIONS ---
 
@@ -74,81 +71,100 @@ async def is_subscribed(user_id):
     if user_id == ADMIN_ID:
         return True
     
-    # Banned users can't use the bot
+    # Check if banned first
     if await is_banned(user_id):
         return False
-
-    try:
-        user_sub = await subs_db.find_one({"user_id": user_id})
-        if user_sub and user_sub.get("status") == "active":
-            expiry = user_sub.get("expiry_date")
-            if expiry and expiry > datetime.datetime.now():
-                return True
-    except Exception as e:
-        log.error(f"DB Error (is_subscribed): {e}")
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT status, expiry_date FROM subscriptions WHERE user_id = ?', (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row and row[0] == "active":
+                expiry = datetime.datetime.fromisoformat(row[1])
+                if expiry > datetime.datetime.now():
+                    return True
     return False
 
 async def add_subscription(user_id, days=0, hours=0, minutes=0):
-    try:
-        user_sub = await subs_db.find_one({"user_id": user_id})
-        now = datetime.datetime.now()
-        
-        if user_sub and user_sub.get("expiry_date") and user_sub.get("expiry_date") > now:
-            base_date = user_sub.get("expiry_date")
-        else:
-            base_date = now
+    now = datetime.datetime.now()
+    async with aiosqlite.connect(DB_FILE) as db:
+        # Puraani expiry check karo
+        async with db.execute('SELECT expiry_date FROM subscriptions WHERE user_id = ?', (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                old_expiry = datetime.datetime.fromisoformat(row[0])
+                base_date = old_expiry if old_expiry > now else now
+            else:
+                base_date = now
             
         new_expiry = base_date + datetime.timedelta(days=days, hours=hours, minutes=minutes)
         
-        await subs_db.update_one(
-            {"user_id": user_id},
-            {"$set": {"expiry_date": new_expiry, "status": "active"}},
-            upsert=True
-        )
+        await db.execute('''INSERT OR REPLACE INTO subscriptions (user_id, status, expiry_date) 
+            VALUES (?, ?, ?)''', (user_id, "active", new_expiry.isoformat()))
+        await db.commit()
         return new_expiry
-    except Exception as e:
-        log.error(f"DB Error (add_sub): {e}")
-        return None
 
 async def cancel_subscription(user_id):
-    await subs_db.update_one({"user_id": user_id}, {"$set": {"status": "expired", "expiry_date": datetime.datetime.now()}})
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute('UPDATE subscriptions SET status = "expired" WHERE user_id = ?', (user_id,))
+        await db.commit()
 
 async def transfer_subscription(from_id, to_id):
-    source = await subs_db.find_one({"user_id": from_id})
-    if not source or source.get("status") != "active":
-        return False, "Source user has no active subscription."
-    
-    expiry = source.get("expiry_date")
-    await cancel_subscription(from_id)
-    await subs_db.update_one(
-        {"user_id": to_id},
-        {"$set": {"expiry_date": expiry, "status": "active"}},
-        upsert=True
-    )
-    return True, "Successfully transferred."
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT expiry_date FROM subscriptions WHERE user_id = ? AND status = "active"', (from_id,)) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return False, "Source user has no active subscription."
+            expiry = row[0]
+            
+        # Swap logic
+        await db.execute('UPDATE subscriptions SET status = "expired" WHERE user_id = ?', (from_id,))
+        await db.execute('''INSERT OR REPLACE INTO subscriptions (user_id, status, expiry_date) 
+            VALUES (?, ?, ?)''', (to_id, "active", expiry))
+        await db.commit()
+        return True, "Subscription successfully transferred."
 
 async def get_sub_info(user_id):
-    user_sub = await subs_db.find_one({"user_id": user_id})
-    if not user_sub:
-        return "No Plan", None
-    
-    expiry = user_sub.get("expiry_date")
-    now = datetime.datetime.now()
-    
-    if expiry > now:
-        time_left = expiry - now
-        return "Active", time_left
-    return "Expired", None
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT expiry_date FROM subscriptions WHERE user_id = ?', (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return "No Plan", None
+            
+            expiry = datetime.datetime.fromisoformat(row[0])
+            now = datetime.datetime.now()
+            
+            if expiry > now:
+                return "Active", expiry - now
+            return "Expired", None
 
 # --- GAME STATE FUNCTIONS ---
 
 async def set_game_state(user_id, game_name, data):
-    try:
-        await state_db.update_one({"user_id": user_id, "game": game_name}, {"$set": {"data": data, "updated_at": datetime.datetime.now()}}, upsert=True)
-    except: pass
+    async with aiosqlite.connect(DB_FILE) as db:
+        # SQLite me JSON direct nahi jata, stringify karna padta hai
+        data_str = json.dumps(data)
+        await db.execute('''INSERT OR REPLACE INTO game_state (user_id, game_name, data) 
+            VALUES (?, ?, ?)''', (user_id, game_name, data_str))
+        await db.commit()
 
 async def get_game_state(user_id, game_name):
-    try:
-        state = await state_db.find_one({"user_id": user_id, "game": game_name})
-        return state["data"] if state else {}
-    except: return {}
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT data FROM game_state WHERE user_id = ? AND game_name = ?', (user_id, game_name)) as cursor:
+            row = await cursor.fetchone()
+            return json.loads(row[0]) if row else {}
+
+# Dummy objects for compatibility (since admin.py used users_db.count_documents)
+# Inhe hum admin.py update karke theek karenge
+class CollectionProxy:
+    async def count_documents(self, query):
+        async with aiosqlite.connect(DB_FILE) as db:
+            if "status" in str(query):
+                async with db.execute('SELECT COUNT(*) FROM subscriptions WHERE status = "active"') as c:
+                    r = await c.fetchone()
+                    return r[0]
+            async with db.execute('SELECT COUNT(*) FROM users') as c:
+                r = await c.fetchone()
+                return r[0]
+
+users_db = CollectionProxy()
+subs_db = CollectionProxy()
