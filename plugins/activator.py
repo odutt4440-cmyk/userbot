@@ -1,4 +1,4 @@
-from main import bot
+from bot_instance import bot 
 from telethon import events, Button
 from core.session_manager import SessionManager
 from database import is_subscribed
