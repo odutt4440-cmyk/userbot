@@ -43,7 +43,8 @@ class SessionManager:
             StringSession(string_session), 
             API_ID, 
             API_HASH,
-            sequential_updates=True
+            sequential_updates=True,
+            flood_sleep_threshold=240 
         )
 
         try:
