@@ -4,12 +4,16 @@ from telethon import events, Button
 from config import START_PIC, ADMIN_ID, LOG_GROUP
 from database import claim_trial, has_claimed_trial, get_setting, set_setting
 
-# --- 1. MAIN MENU LOGIC (Instant Speed) ---
+# Photo caching handle
+START_MEDIA = None
+
+# --- 1. MAIN MENU LOGIC ---
 async def send_start_menu(event, edit=False):
+    global START_MEDIA
     welcome_text = (
         "👋 **Welcome to Userbot Community!**\n\n"
         "Transform your Telegram account into a powerful userbot empire. "
-        "Experience high-speed games, automation tools, and fun modules.\n\n"
+        "High-speed games, automation tools, and fun modules at your fingertips.\n\n"
         "Navigate using the buttons below to get started. 👇"
     )
     
@@ -21,113 +25,70 @@ async def send_start_menu(event, edit=False):
     ]
 
     try:
-        # Check database if we already have the File ID for the start picture
-        cached_file_id = await get_setting("START_PIC_ID")
-        file_to_send = cached_file_id if cached_file_id else START_PIC
-        
+        # DB se cached File ID uthao for speed
+        if not START_MEDIA:
+            START_MEDIA = await get_setting("START_PIC_ID")
+
         if edit:
-            # If it was a button click, we can't 'edit' a photo into text easily, 
-            # so we just update the text or send a new menu.
             await event.edit(welcome_text, buttons=buttons)
         else:
             sent_msg = await bot.send_file(
                 event.chat_id, 
-                file_to_send, 
+                START_MEDIA if START_MEDIA else START_PIC, 
                 caption=welcome_text, 
                 buttons=buttons
             )
-            # If we didn't have a cached ID, save it now for next time
-            if not cached_file_id and sent_msg.photo:
-                await set_setting("START_PIC_ID", str(sent_msg.photo.id))
+            # Pehli baar upload hone par ID save karlo
+            if not START_MEDIA and sent_msg.media:
+                START_MEDIA = sent_msg.media
+                # Media object ko string me convert karke save karo
+                await set_setting("START_PIC_ID", str(START_MEDIA))
                 
     except Exception as e:
-        print(f"Error in Start Menu: {e}")
-        # Fallback to plain text if photo fails
+        print(f"Start Menu Error: {e}")
         if edit: await event.edit(welcome_text, buttons=buttons)
         else: await event.respond(welcome_text, buttons=buttons)
 
-# --- 2. START HANDLER + LOGGER ---
+# --- 2. START HANDLER ---
 @bot.on(events.NewMessage(pattern=r'(?i)^/start'))
 async def start_handler(event):
-    user = await event.get_sender()
-    user_id = event.sender_id
-    name = user.first_name if user.first_name else "User"
-    username = f"@{user.username}" if user.username else "No Username"
-
-    # LOGGING: Notify Admin Group
     if LOG_GROUP:
-        log_msg = (
-            "👤 **User Started Bot**\n\n"
-            f"**Name:** {name}\n"
-            f"**ID:** `{user_id}`\n"
-            f"**Username:** {username}"
-        )
-        try:
-            await bot.send_message(LOG_GROUP, log_msg)
-        except: pass
-
+        user = await event.get_sender()
+        name = user.first_name if user.first_name else "User"
+        username = f"@{user.username}" if user.username else "N/A"
+        await bot.send_message(LOG_GROUP, f"👤 **New User Started:**\nName: {name}\nID: `{event.sender_id}`\nUser: {username}")
+    
     await send_start_menu(event)
 
-# --- 3. TRIAL SYSTEM CALLBACK ---
+# --- 3. TRIAL SYSTEM ---
 @bot.on(events.CallbackQuery(data="claim_trial_btn"))
 async def trial_handler(event):
     user_id = event.sender_id
-    
-    # Check if user already used trial
     if await has_claimed_trial(user_id):
-        await event.answer("⚠️ You have already claimed your free trial!", alert=True)
+        await event.answer("⚠️ You have already claimed your trial!", alert=True)
         return
 
-    # Claim the 24-hour trial via database
     success, result = await claim_trial(user_id)
-    
     if success:
-        # result is the expiry datetime object
-        expiry_str = result.strftime('%Y-%m-%d %H:%M:%S')
-        await event.answer("🎉 1-Day Trial Activated!", alert=True)
+        await event.answer("🎉 24-Hour Trial Activated!", alert=True)
         await event.edit(
-            f"🎁 **Free Trial Activated!**\n\n"
-            f"You now have **24 hours** of premium access to all modules.\n"
-            f"**Expires on:** `{expiry_str}`\n\n"
-            "Open Modules and start your userbot now! 🚀",
+            "🎁 **Free Trial Activated!**\n\nYou now have **full access** for 24 hours.\n"
+            "Open the Modules menu and start your first bot! 🚀",
             buttons=[[Button.inline("⚙️ Open Modules", data="modules_main")]]
         )
-        # Log trial usage
-        if LOG_GROUP:
-            await bot.send_message(LOG_GROUP, f"🎁 **Trial Claimed:** `{user_id}` has activated 24h access.")
     else:
         await event.answer(f"❌ Error: {result}", alert=True)
 
-# --- 4. MODULES MENU (Command + Button) ---
-async def send_modules_menu(event, edit=False):
-    text = (
-        "📂 **Select Module Type**\n\n"
-        "Explore our high-speed premium modules. "
-        "Ensure you have an active subscription or trial."
-    )
-    buttons = [
-        [Button.inline("👮 Admin Userbot", data="admin_ub"), Button.inline("🥳 Fun Userbot", data="fun_ub")],
-        [Button.inline("🎮 Games Userbot", data="games_ub")],
-        [Button.inline("🔙 Back to Menu", data="start_back")]
-    ]
-    if edit: await event.edit(text, buttons=buttons)
-    else: await event.respond(text, buttons=buttons)
-
-@bot.on(events.NewMessage(pattern=r'(?i)^/modules'))
-async def modules_cmd(event):
-    await send_modules_menu(event)
-
-@bot.on(events.CallbackQuery(data="modules_main"))
-async def modules_callback(event):
-    await send_modules_menu(event, edit=True)
-
-# --- 5. GAMES MENU ---
+# --- 4. GAMES SUB-MENU WITH COMMANDS ---
 @bot.on(events.CallbackQuery(data="games_ub"))
 async def games_menu(event):
     text = (
-        "🎮 **Games Userbot Modules**\n\n"
-        "High-performance solvers for your favorite games. "
-        "Select one below to begin installation."
+        "🎮 **Userbot Games Center**\n\n"
+        "Click a game to login. Commands for each game:\n\n"
+        "🟢 **WordSeek:** `.ws on` | `.ws off` | `.ws loop on`\n"
+        "🟢 **Wordly:** `.won` | `.woff` | `.wstatus` | `.wdelay 0.5`\n"
+        "🟢 **Octopus:** `/game@OctopusEN_Bot` | `.octo delay 2.6 3.2`\n"
+        "🟢 **WordChain:** `on1` | `autoplay on` | `status`"
     )
     buttons = [
         [Button.inline("WordSeek", data="mod_wordseek"), Button.inline("WordChain", data="mod_wordchain")],
@@ -136,13 +97,20 @@ async def games_menu(event):
     ]
     await event.edit(text, buttons=buttons)
 
-# --- 6. CALLBACK HANDLERS ---
+# --- 5. OTHER CALLBACKS ---
 @bot.on(events.CallbackQuery)
 async def callback_handler(event):
     data = event.data.decode("utf-8")
     if data == "start_back":
         await send_start_menu(event, edit=True)
+    elif data == "modules_main":
+        text = "📂 **Select a Category:**"
+        buttons = [
+            [Button.inline("👮 Admin Tools", data="admin_ub"), Button.inline("🎮 Game Bots", data="games_ub")],
+            [Button.inline("🔙 Back to Menu", data="start_back")]
+        ]
+        await event.edit(text, buttons=buttons)
     elif data == "rules":
-        await event.answer("1. No spamming\n2. One trial per user\n3. Respect the community", alert=True)
+        await event.answer("1. One trial per user.\n2. No spamming commands.\n3. Maintain sub to keep bot alive.", alert=True)
     elif data == "dev_info":
-        await event.answer("Developed by: @YourUsername\nBackend: SQLite Fast Engine", alert=True)
+        await event.answer("Developed by: @YourUsername\nSaaS Userbot Engine v2.0", alert=True)
