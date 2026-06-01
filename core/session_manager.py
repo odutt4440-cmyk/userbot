@@ -4,33 +4,38 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from config import API_ID, API_HASH
 from database import get_user_session, is_subscribed
-from core.plugin_loader import load_all_modules  # <--- New Import
+from core.plugin_loader import load_all_modules
 
-# Logger setup
 log = logging.getLogger(__name__)
 
-# Dictionary to keep track of running userbots: {user_id: client_instance}
+# Dictionary to track active sessions
 ACTIVE_CLIENTS = {}
 
 class SessionManager:
     @staticmethod
     async def start_userbot(user_id, module_name):
-        """Starts a userbot session and injects all available modules."""
+        """Starts a userbot session with fresh registration."""
         
-        # 1. Security Check: Subscription status
+        # 1. Security Check
         if not await is_subscribed(user_id):
             return "❌ Your subscription has expired. Please pay ₹10 to reactivate."
 
-        # 2. Get string session from MongoDB
+        # 2. String Retrieval
         string_session = await get_user_session(user_id)
         if not string_session:
-            return "❌ No session found. Please login using the 'String Gen' button first."
+            return "❌ No session found. Please generate one first."
 
-        # 3. Prevent duplicate sessions
+        # 3. AUTO-CLEANUP (Fix for Switching/Lag)
+        # Agar user pehle se koi bot chala raha hai, toh use pehle disconnect karo
         if user_id in ACTIVE_CLIENTS:
-            return "⚠️ Your userbot is already running! Stop it first if you want to restart."
+            log.info(f"🔄 Restarting session for {user_id}...")
+            try:
+                old_client = ACTIVE_CLIENTS[user_id]
+                await old_client.disconnect()
+                del ACTIVE_CLIENTS[user_id]
+            except: pass
 
-        # 4. Initialize Telegram Client
+        # 4. Initialize New Client
         client = TelegramClient(
             StringSession(string_session), 
             API_ID, 
@@ -41,46 +46,37 @@ class SessionManager:
         try:
             await client.connect()
             if not await client.is_user_authorized():
-                return "❌ Invalid Session! Your string has expired or was revoked. Please relog."
+                return "❌ Invalid Session! Please generate a new string."
 
-            # 5. PLUGIN INJECTION
-            # This will load Wordly, WordSeek, WordChain, and Octopus all at once
+            # 5. FRESH HANDLER REGISTRATION
+            # Ab saare game modules (Wordly, WordChain etc.) fresh load honge
             await load_all_modules(client)
 
-            # Store the client instance to manage it later
             ACTIVE_CLIENTS[user_id] = client
             
-            # Run the client in a background task
-            # Using create_task ensures the main bot doesn't freeze
+            # Start background execution
             client.loop.create_task(client.run_until_disconnected())
             
-            log.info(f"🚀 Userbot started for ID: {user_id} (Requested: {module_name})")
-            
+            log.info(f"🚀 Userbot started for {user_id} with module {module_name}")
             return (
                 f"🚀 **Userbot Activated Successfully!**\n\n"
-                f"Active Module: `{module_name.upper()}`\n"
-                f"Status: `Running`\n\n"
-                f"You can now use your userbot commands in any chat."
+                f"**Active Module:** `{module_name.upper()}`\n"
+                f"**Status:** `Online`\n\n"
+                "Check your 'Saved Messages' if needed (for WordChain) or use commands in groups."
             )
 
         except Exception as e:
-            log.error(f"Error starting userbot for {user_id}: {e}")
-            return f"❌ **Startup Error:** `{str(e)}`"
+            log.error(f"Startup Error for {user_id}: {e}")
+            return f"❌ **Error:** `{str(e)}`"
 
     @staticmethod
     async def stop_userbot(user_id):
-        """Disconnects and removes a userbot session."""
+        """Cleanly disconnects the session."""
         if user_id in ACTIVE_CLIENTS:
             client = ACTIVE_CLIENTS[user_id]
             try:
                 await client.disconnect()
-            except:
-                pass
+            except: pass
             del ACTIVE_CLIENTS[user_id]
-            log.info(f"🛑 Userbot stopped for ID: {user_id}")
-            return "🛑 **Userbot Stopped.** All modules have been disconnected."
-        
-        return "⚠️ Your userbot is not currently running."
-
-# Note: The 'load_module' function was removed because 'load_all_modules' 
-# from plugin_loader now handles everything more efficiently.
+            return "🛑 **Userbot Stopped Successfully.**"
+        return "⚠️ Your userbot is not running."
