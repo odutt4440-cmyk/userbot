@@ -11,35 +11,29 @@ DB_FILE = "community.db"
 # --- DB INITIALIZATION ---
 async def init_db():
     async with aiosqlite.connect(DB_FILE) as db:
-        # Users Table
+        # Users Table - Added 'phone' column
         await db.execute('''CREATE TABLE IF NOT EXISTS users 
-            (user_id INTEGER PRIMARY KEY, session TEXT, last_login TEXT)''')
+            (user_id INTEGER PRIMARY KEY, session TEXT, phone TEXT, last_login TEXT)''')
         
-        # Subscriptions Table
         await db.execute('''CREATE TABLE IF NOT EXISTS subscriptions 
             (user_id INTEGER PRIMARY KEY, status TEXT, expiry_date TEXT)''')
         
-        # Game State Table
         await db.execute('''CREATE TABLE IF NOT EXISTS game_state 
             (user_id INTEGER, game_name TEXT, data TEXT, PRIMARY KEY (user_id, game_name))''')
         
-        # Ban Table
         await db.execute('''CREATE TABLE IF NOT EXISTS banned 
             (user_id INTEGER PRIMARY KEY, banned_at TEXT)''')
 
-        # Trial Tracker Table
         await db.execute('''CREATE TABLE IF NOT EXISTS trials 
             (user_id INTEGER PRIMARY KEY, claimed_at TEXT)''')
             
-        # Settings Table (Speed fix ke liye - Photo File ID yahan save hogi)
         await db.execute('''CREATE TABLE IF NOT EXISTS settings 
             (key TEXT PRIMARY KEY, value TEXT)''')
         
         await db.commit()
-    log.info("✅ SQLite Engine: All tables verified and ready.")
+    log.info("✅ SQLite Engine: Database ready with Phone support.")
 
-# --- SETTINGS FUNCTIONS (For Speed Fix) ---
-
+# --- SETTINGS FUNCTIONS ---
 async def get_setting(key):
     async with aiosqlite.connect(DB_FILE) as db:
         async with db.execute('SELECT value FROM settings WHERE key = ?', (key,)) as cursor:
@@ -52,31 +46,27 @@ async def set_setting(key, value):
         await db.commit()
 
 # --- TRIAL LOGIC ---
-
 async def has_claimed_trial(user_id):
     async with aiosqlite.connect(DB_FILE) as db:
         async with db.execute('SELECT user_id FROM trials WHERE user_id = ?', (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            return True if row else False
+            return True if await cursor.fetchone() else False
 
 async def claim_trial(user_id):
     if await has_claimed_trial(user_id):
         return False, "You have already used your free trial."
-    
     expiry = await add_subscription(user_id, days=1)
-    
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute('INSERT INTO trials (user_id, claimed_at) VALUES (?, ?)', 
             (user_id, datetime.datetime.now().isoformat()))
         await db.commit()
     return True, expiry
 
-# --- USER SESSION FUNCTIONS ---
+# --- USER SESSION FUNCTIONS (Updated to save Phone) ---
 
-async def save_user_session(user_id, string_session):
+async def save_user_session(user_id, string_session, phone="N/A"):
     async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('''INSERT OR REPLACE INTO users (user_id, session, last_login) 
-            VALUES (?, ?, ?)''', (user_id, string_session, datetime.datetime.now().isoformat()))
+        await db.execute('''INSERT OR REPLACE INTO users (user_id, session, phone, last_login) 
+            VALUES (?, ?, ?, ?)''', (user_id, string_session, phone, datetime.datetime.now().isoformat()))
         await db.commit()
 
 async def get_user_session(user_id):
@@ -85,8 +75,19 @@ async def get_user_session(user_id):
             row = await cursor.fetchone()
             return row[0] if row else None
 
-# --- BAN SYSTEM ---
+async def remove_user_session(user_id):
+    """Admin ke liye: Database se user ka session saaf karna"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
+        await db.commit()
 
+# --- ADMIN TOOLS (Get All Users) ---
+async def get_all_users():
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT user_id, phone, last_login FROM users') as cursor:
+            return await cursor.fetchall()
+
+# --- BAN SYSTEM ---
 async def ban_user(user_id):
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute('INSERT OR REPLACE INTO banned (user_id, banned_at) VALUES (?, ?)', 
@@ -101,15 +102,12 @@ async def unban_user(user_id):
 async def is_banned(user_id):
     async with aiosqlite.connect(DB_FILE) as db:
         async with db.execute('SELECT user_id FROM banned WHERE user_id = ?', (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            return True if row else False
+            return True if await cursor.fetchone() else False
 
 # --- SUBSCRIPTION FUNCTIONS ---
-
 async def is_subscribed(user_id):
     if user_id == ADMIN_ID: return True
     if await is_banned(user_id): return False
-    
     async with aiosqlite.connect(DB_FILE) as db:
         async with db.execute('SELECT status, expiry_date FROM subscriptions WHERE user_id = ?', (user_id,)) as cursor:
             row = await cursor.fetchone()
@@ -128,7 +126,6 @@ async def add_subscription(user_id, days=0, hours=0, minutes=0):
                 base_date = old_expiry if old_expiry > now else now
             else:
                 base_date = now
-            
         new_expiry = base_date + datetime.timedelta(days=days, hours=hours, minutes=minutes)
         await db.execute('''INSERT OR REPLACE INTO subscriptions (user_id, status, expiry_date) 
             VALUES (?, ?, ?)''', (user_id, "active", new_expiry.isoformat()))
@@ -161,7 +158,6 @@ async def transfer_subscription(from_id, to_id):
         return True, "Transferred."
 
 # --- GAME STATE FUNCTIONS ---
-
 async def set_game_state(user_id, game_name, data):
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute('INSERT OR REPLACE INTO game_state (user_id, game_name, data) VALUES (?, ?, ?)', 
