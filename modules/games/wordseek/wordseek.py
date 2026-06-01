@@ -169,8 +169,13 @@ def register(client):
     @client.on(events.NewMessage)
     async def solver(event):
         if not client.ws_enabled or event.chat_id != client.ws_chat: return
+        
         sender = await event.get_sender()
-        if not sender or getattr(sender, "username", "").lower() != "wordseekbot": return
+        if not sender: return
+        
+        # FIX: Handle NoneType properly so it never crashes again
+        sender_username = getattr(sender, "username", "") or "" 
+        if sender_username.lower() != "wordseekbot": return
         
         text = event.raw_text
         if "Game started!" in text:
