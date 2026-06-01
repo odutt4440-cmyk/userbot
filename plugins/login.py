@@ -1,93 +1,99 @@
 from bot_instance import bot 
 from telethon import events, Button
-from database import save_user_session, get_user_session
+from database import save_user_session, get_user_session, is_subscribed
 
-# Temporary dictionary to track users who need to provide a string
-# Key: user_id, Value: module_name
+# Tracking users providing session strings
 WAITING_FOR_STR = {}
 
-# --- 1. WHEN USER CLICKS A MODULE (e.g., Wordly, WordSeek) ---
+# --- 1. MODULE CLICK HANDLER ---
 @bot.on(events.CallbackQuery(pattern=r"mod_"))
 async def login_step_1(event):
     user_id = event.sender_id
-    # Extracting module name from callback data
     module_name = event.data.decode("utf-8").replace("mod_", "")
     
-    # Check if this user already has a session in our Database
+    # Check session and subscription status
     existing_session = await get_user_session(user_id)
+    subscribed = await is_subscribed(user_id)
     
     if existing_session:
-        # Session exists, ask to activate or change
-        await event.edit(
-            f"✅ **Account Connected!**\n"
-            f"Module Selected: `{module_name.upper()}`\n\n"
-            "We found an existing session for your account. "
-            "Would you like to activate this module now?",
-            buttons=[
-                [Button.inline("🚀 Activate Now", data=f"activate_{module_name}")],
-                [Button.inline("🔄 Change Session String", data=f"relog_{module_name}")]
-            ]
-        )
+        status_text = "✅ **Account Connected!**"
+        if not subscribed:
+            # Session hai par paise/trial nahi hai
+            await event.edit(
+                f"{status_text}\nModule: `{module_name.upper()}`\n\n"
+                "You need an active subscription or trial to start this module.",
+                buttons=[
+                    [Button.inline("💳 Pay ₹10 & Activate", data="pay_now")],
+                    [Button.inline("🎁 Claim Trial", data="claim_trial_btn")],
+                    [Button.inline("🔄 Change String", data=f"relog_{module_name}")]
+                ]
+            )
+        else:
+            # Sab kuch hai, seedha activate
+            await event.edit(
+                f"{status_text}\nModule: `{module_name.upper()}`\n\n"
+                "Your account is ready. Click below to fire up the userbot!",
+                buttons=[
+                    [Button.inline("🚀 Activate Now", data=f"activate_{module_name}")],
+                    [Button.inline("🔄 Change String", data=f"relog_{module_name}")]
+                ]
+            )
     else:
-        # No session found, request string
+        # No session, ask for string
         WAITING_FOR_STR[user_id] = module_name
         await event.edit(
             f"🔑 **Login Required: {module_name.upper()}**\n\n"
-            "To run this module, I need your **Telethon String Session**.\n\n"
-            "**Instructions:**\n"
-            "1. Generate a string using the 'String Gen' tool.\n"
-            "2. Paste the session string here in the chat.\n\n"
-            "⚠️ **Privacy Note:** Your session is stored securely and only used to run your modules.",
+            "To run this module, please provide your **Telethon String Session**.\n\n"
+            "**How to get it?**\n"
+            "1. Use the 'Generate String' tool in the main menu.\n"
+            "2. Paste the long code here in the chat.\n\n"
+            "⚠️ Your session is safe and encrypted.",
             buttons=[Button.inline("❌ Cancel", data="start_back")]
         )
 
-# --- 2. RECEIVE AND SAVE THE STRING SESSION ---
+# --- 2. RECEIVE STRING HANDLER ---
 @bot.on(events.NewMessage)
 async def receive_string(event):
     user_id = event.sender_id
     
-    # Check if we are actually waiting for a string from this user
     if user_id in WAITING_FOR_STR:
-        # If user sends a command instead of a string, ignore it
-        if event.text.startswith('/'):
-            return
+        if event.text.startswith('/'): return
 
         string_session = event.text.strip()
         module = WAITING_FOR_STR[user_id]
         
-        # Basic Validation: Telethon strings are usually very long
         if len(string_session) < 50:
-            await event.reply(
-                "❌ **Invalid String Detected!**\n\n"
-                "The string you sent is too short to be a valid Telethon session. "
-                "Please make sure you copied the full string and try again."
-            )
+            await event.reply("❌ **Invalid String!** Please send a valid Telethon session.")
             return
         
-        # Save to MongoDB via database.py
+        # Save to SQLite
         await save_user_session(user_id, string_session)
         
-        # Success response with Payment trigger
-        await event.reply(
-            f"✅ **Session Saved Successfully!**\n\n"
-            f"Your account is now linked. You are one step away from activating `{module.upper()}`.\n\n"
-            "💰 **Subscription:** A small fee of **₹10/Month** is required to keep the bot running 24/7 on our servers.",
-            buttons=[[Button.inline("💳 Pay ₹10 & Activate", data="pay_now")]]
-        )
+        # Check if they already have trial/sub before showing payment button
+        subscribed = await is_subscribed(user_id)
         
-        # Remove from waiting list
+        if subscribed:
+            await event.reply(
+                f"✅ **Session Saved!**\n\n"
+                f"You have an active subscription/trial. You can now activate `{module.upper()}` immediately!",
+                buttons=[[Button.inline("🚀 Activate Now", data=f"activate_{module}")]]
+            )
+        else:
+            await event.reply(
+                f"✅ **Session Saved!**\n\n"
+                f"Now you just need to activate your access to start using `{module.upper()}`.",
+                buttons=[
+                    [Button.inline("💳 Pay ₹10 & Activate", data="pay_now")],
+                    [Button.inline("🎁 Claim 1-Day Trial", data="claim_trial_btn")]
+                ]
+            )
+        
         del WAITING_FOR_STR[user_id]
 
-# --- 3. RELOG LOGIC (To update/change string) ---
+# --- 3. RELOG LOGIC ---
 @bot.on(events.CallbackQuery(pattern=r"relog_"))
 async def relog(event):
     user_id = event.sender_id
     module = event.data.decode("utf-8").replace("relog_", "")
-    
     WAITING_FOR_STR[user_id] = module
-    await event.edit(
-        "🔄 **Update Session String**\n\n"
-        "Please send your new **Telethon String Session** below.\n"
-        "The old session will be replaced.",
-        buttons=[Button.inline("🔙 Back", data=f"mod_{module}")]
-    )
+    await event.edit("🔄 **Update String:**\nPlease send your new Telethon session string below:")
