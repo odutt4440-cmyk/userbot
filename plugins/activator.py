@@ -6,36 +6,44 @@ from database import is_subscribed
 # --- 1. HANDLE MODULE ACTIVATION ---
 @bot.on(events.CallbackQuery(pattern=r"activate_"))
 async def activate_module(event):
+    # 🛡️ Gatekeeper: Check if interaction is in Private DM
+    if not event.is_private:
+        await event.answer("⚠️ This action is only allowed in Private DM for security reasons.", alert=True)
+        return
+
     user_id = event.sender_id
     # Extract module name (e.g., activate_wordly -> wordly)
     module_name = event.data.decode("utf-8").replace("activate_", "")
     
-    # 🛡️ Security Check: Is the subscription still active?
+    # 🛡️ Final Security Check: Subscription/Trial status
     if not await is_subscribed(user_id):
         await event.edit(
-            "⚠️ **Subscription Required!**\n\n"
-            "Your premium access has expired or is not active. "
-            "Please pay ₹10 to activate this module and enjoy 24/7 service.",
-            buttons=[[Button.inline("💳 Pay ₹10 & Activate", data="pay_now")]]
+            "⚠️ **Premium Access Required**\n\n"
+            "Your subscription has expired or is not yet active. "
+            "Please claim your 1-Day trial or pay ₹10 to continue.",
+            buttons=[
+                [Button.inline("💳 Pay ₹10 & Activate", data="pay_now")],
+                [Button.inline("🎁 Claim Free Trial", data="claim_trial_btn")]
+            ]
         )
         return
 
-    # UI Feedback: Let the user know the engine is firing up
+    # UI Feedback: Show that the engine is starting
     await event.edit(
-        f"⏳ **Initializing `{module_name.upper()}`...**\n"
-        "Connecting to Telegram servers. Please wait a moment."
+        f"⏳ **Deploying `{module_name.upper()}`...**\n"
+        "Connecting to our high-speed servers. Please wait."
     )
 
-    # 🚀 Trigger the Core Engine (Session Manager)
-    # This will load all modules (Wordly, Octopus, etc.) into the user's account
+    # 🚀 Call the Engine (Session Manager)
+    # This automatically refreshes/stops any old session first (Logic in File 8)
     result_message = await SessionManager.start_userbot(user_id, module_name)
 
-    # UI Update: Based on success or failure
-    # We check if the result contains "Successfully" to show the Stop button
-    if "Successfully" in result_message:
+    # UI Update: Success or Error
+    if "Activated" in result_message:
+        # Userbot is now running in background
         buttons = [[Button.inline("🛑 Stop Userbot", data=f"stop_{module_name}")]]
     else:
-        # If there's an error (Invalid string, etc.), show back button
+        # Something went wrong (Revoked session, connection error etc.)
         buttons = [[Button.inline("🔙 Back to Modules", data="modules_main")]]
 
     await event.edit(result_message, buttons=buttons)
@@ -43,23 +51,26 @@ async def activate_module(event):
 # --- 2. HANDLE STOPPING THE USERBOT ---
 @bot.on(events.CallbackQuery(pattern=r"stop_"))
 async def stop_module(event):
+    # 🛡️ Private Only Check
+    if not event.is_private: return
+
     user_id = event.sender_id
     module_name = event.data.decode("utf-8").replace("stop_", "")
 
-    # 🛑 Call the Engine to disconnect the client
+    # 🛑 Disconnect the client via Engine
     result = await SessionManager.stop_userbot(user_id)
     
     await event.edit(
-        f"{result}\n\nModule `{module_name.upper()}` is no longer running on our servers.",
+        f"{result}\n\nYour session has been terminated safely.",
         buttons=[
-            [Button.inline("🚀 Restart Module", data=f"activate_{module_name}")],
-            [Button.inline("🔙 Back to Menu", data="modules_main")]
+            [Button.inline("🚀 Restart Engine", data=f"activate_{module_name}")],
+            [Button.inline("🔙 Main Menu", data="start_back")]
         ]
     )
 
 # --- 3. RE-STARTING ALREADY LOGGED IN USERS ---
-# This handles the 'Activate' button from login.py when a session is already found
 @bot.on(events.CallbackQuery(pattern=r"start_ub_"))
 async def restart_existing(event):
+    if not event.is_private: return
     module_name = event.data.decode("utf-8").replace("start_ub_", "")
     await activate_module(event)
