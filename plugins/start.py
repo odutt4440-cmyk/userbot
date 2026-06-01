@@ -7,6 +7,13 @@ from database import claim_trial, has_claimed_trial, get_setting, set_setting
 # Photo caching handle
 START_MEDIA = None
 
+# --- HELPER: PRIVATE ONLY CHECK ---
+async def is_private_only(event):
+    if not event.is_private:
+        await event.reply("❌ **Security Notice:**\n\nThis bot commands only work in **Private Chat (DM)** for security reasons.\n\n👉 Please use me here: @YourBotUsername")
+        return False
+    return True
+
 # --- 1. MAIN MENU LOGIC ---
 async def send_start_menu(event, edit=False):
     global START_MEDIA
@@ -25,7 +32,6 @@ async def send_start_menu(event, edit=False):
     ]
 
     try:
-        # DB se cached File ID uthao for speed
         if not START_MEDIA:
             START_MEDIA = await get_setting("START_PIC_ID")
 
@@ -38,11 +44,9 @@ async def send_start_menu(event, edit=False):
                 caption=welcome_text, 
                 buttons=buttons
             )
-            # Pehli baar upload hone par ID save karlo
             if not START_MEDIA and sent_msg.media:
-                START_MEDIA = sent_msg.media
-                # Media object ko string me convert karke save karo
-                await set_setting("START_PIC_ID", str(START_MEDIA))
+                START_MEDIA = str(sent_msg.media)
+                await set_setting("START_PIC_ID", START_MEDIA)
                 
     except Exception as e:
         print(f"Start Menu Error: {e}")
@@ -52,6 +56,10 @@ async def send_start_menu(event, edit=False):
 # --- 2. START HANDLER ---
 @bot.on(events.NewMessage(pattern=r'(?i)^/start'))
 async def start_handler(event):
+    # 🛡️ Gatekeeper: Check if DM
+    if not await is_private_only(event):
+        return
+
     if LOG_GROUP:
         user = await event.get_sender()
         name = user.first_name if user.first_name else "User"
