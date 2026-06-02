@@ -3,159 +3,205 @@ import asyncio
 import aiosqlite
 from bot_instance import bot 
 from telethon import events, Button, errors
-from config import ADMIN_ID, SUDO_USERS
-from core.session_manager import ACTIVE_CLIENTS, SessionManager # ACTIVE_CLIENTS import kiya
+from config import ADMIN_ID
+from core.session_manager import ACTIVE_CLIENTS, SessionManager
 from database import (
     add_subscription, 
-    users_db, 
-    subs_db, 
     ban_user, 
     unban_user, 
+    is_banned,
     transfer_subscription, 
     cancel_subscription,
     get_sub_info,
-    remove_user_session, # Naya function
+    remove_user_session,
+    has_claimed_trial,
     DB_FILE
 )
 
-# --- HELPER: CHECK IF SUDO ---
-def is_sudo(user_id):
-    return user_id in SUDO_USERS
+# --- NEW SUDO POWER HELPERS ---
 
-# --- 1. LIST ACTIVE SESSIONS: /active ---
+async def get_sudo_powers(user_id):
+    """DB se sudo ki powers check karne ke liye"""
+    if user_id == ADMIN_ID:
+        return {"can_ban": 1, "can_pay": 1} # Owner has all powers
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT can_ban, can_pay FROM sudo_users WHERE user_id = ?', (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {"can_ban": row[0], "can_pay": row[1]}
+    return None
+
+async def is_staff(user_id):
+    """Check if user is either Admin or any Sudo"""
+    if user_id == ADMIN_ID: return True
+    powers = await get_sudo_powers(user_id)
+    return powers is not None
+
+# --- 1. SUDO MANAGEMENT (OWNER ONLY) ---
+
+@bot.on(events.NewMessage(pattern=r'/addsudo (\d+) (\d) (\d)'))
+async def add_sudo_handler(event):
+    if event.sender_id != ADMIN_ID: return
+    try:
+        uid = int(event.pattern_match.group(1))
+        can_ban = int(event.pattern_match.group(2)) # 1 for Yes, 0 for No
+        can_pay = int(event.pattern_match.group(3)) # 1 for Yes, 0 for No
+        
+        async with aiosqlite.connect(DB_FILE) as db:
+            await db.execute('INSERT OR REPLACE INTO sudo_users VALUES (?, ?, ?)', (uid, can_ban, can_pay))
+            await db.commit()
+        
+        powers_msg = f"🚫 Ban: {'✅' if can_ban else '❌'} | 💳 Pay: {'✅' if can_pay else '❌'}"
+        await event.reply(f"👤 **Sudo Added Successfully!**\n**ID:** `{uid}`\n**Powers:** {powers_msg}")
+    except Exception as e:
+        await event.reply(f"❌ **Error:** {e}")
+
+@bot.on(events.NewMessage(pattern=r'/rmsudo (\d+)'))
+async def rm_sudo_handler(event):
+    if event.sender_id != ADMIN_ID: return
+    uid = int(event.pattern_match.group(1))
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute('DELETE FROM sudo_users WHERE user_id = ?', (uid,))
+        await db.commit()
+    await event.reply(f"❌ **Sudo Removed:** `{uid}` is no longer staff.")
+
+@bot.on(events.NewMessage(pattern='/sudolist'))
+async def sudo_list(event):
+    if event.sender_id != ADMIN_ID: return
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT * FROM sudo_users') as cursor:
+            rows = await cursor.fetchall()
+            if not rows: return await event.reply("No sudo users found.")
+            msg = "🛡️ **Empire Staff List:**\n\n"
+            for r in rows:
+                msg += f"👤 `{r[0]}` | Ban: {r[1]} | Pay: {r[2]}\n"
+            await event.reply(msg)
+
+# --- 2. ACTIVE SESSIONS & LOGOUT ---
+
 @bot.on(events.NewMessage(pattern='/active'))
 async def active_sessions(event):
-    if not is_sudo(event.sender_id): return
-    
+    if not await is_staff(event.sender_id): return
     if not ACTIVE_CLIENTS:
-        await event.reply("info: No userbot sessions are currently running on the server.")
-        return
-
-    msg = "🚀 **Active Userbot Sessions:**\n\n"
-    async with aiosqlite.connect(DB_FILE) as db:
-        for user_id in ACTIVE_CLIENTS.keys():
-            async with db.execute('SELECT phone FROM users WHERE user_id = ?', (user_id,)) as c:
-                row = await cursor.fetchone()
-                phone = row[0] if row else "Unknown"
-                msg += f"👤 **ID:** `{user_id}` | 📱 **Phone:** `{phone}`\n"
+        return await event.reply("info: No userbot sessions are currently running.")
     
+    msg = "🚀 **Active Sessions:**\n\n"
+    async with aiosqlite.connect(DB_FILE) as db:
+        for uid in list(ACTIVE_CLIENTS.keys()):
+            async with db.execute('SELECT phone FROM users WHERE user_id = ?', (uid,)) as c:
+                row = await c.fetchone()
+                msg += f"👤 `{uid}` | 📱 `{row[0] if row else 'N/A'}`\n"
     await event.reply(msg)
 
-# --- 2. LOGOUT & TERMINATE: /logout <id> ---
 @bot.on(events.NewMessage(pattern=r'/logout (\d+)'))
 async def logout_handler(event):
-    if not is_sudo(event.sender_id): return
-    
+    if not await is_staff(event.sender_id): return
     user_id = int(event.pattern_match.group(1))
-    
-    # Check if session exists in memory
     if user_id in ACTIVE_CLIENTS:
         try:
             client = ACTIVE_CLIENTS[user_id]
-            # Telegram servers se session permanently delete karega (Account Safe)
             await client.log_out() 
             await client.disconnect()
             del ACTIVE_CLIENTS[user_id]
-        except Exception as e:
-            print(f"Logout Error: {e}")
-
-    # Database se entry uda do
+        except: pass
     await remove_user_session(user_id)
-    
-    await event.reply(f"✅ **Logout Successful!**\n\nUser `{user_id}` has been logged out from the server and the session has been terminated from their devices.")
-    
-    try:
-        await bot.send_message(user_id, "⚠️ **Security Notice:** Your userbot session has been terminated and logged out by the Admin.")
-    except: pass
+    await event.reply(f"✅ **Logout Successful:** `{user_id}` terminated.")
 
-# --- 3. GRANULAR APPROVE: /approve <id> <days> <hours> <mins> ---
+# --- 3. BAN SYSTEM (Powers: can_ban) ---
+
+@bot.on(events.NewMessage(pattern=r'/ban (\d+)'))
+async def ban_handler(event):
+    p = await get_sudo_powers(event.sender_id)
+    if not p or not p['can_ban']: return
+    
+    user_id = int(event.pattern_match.group(1))
+    await ban_user(user_id)
+    if user_id in ACTIVE_CLIENTS:
+        await SessionManager.stop_userbot(user_id)
+    await event.reply(f"🚫 **User Banned:** `{user_id}`.")
+
+@bot.on(events.NewMessage(pattern=r'/unban (\d+)'))
+async def unban_handler(event):
+    p = await get_sudo_powers(event.sender_id)
+    if not p or not p['can_ban']: return
+    user_id = int(event.pattern_match.group(1))
+    await unban_user(user_id)
+    await event.reply(f"✅ **User Unbanned:** `{user_id}`.")
+
+# --- 4. PAYMENT & SUBS (Powers: can_pay) ---
+
 @bot.on(events.NewMessage(pattern=r'/approve (\d+) (\d+)(?: (\d+))?(?: (\d+))?'))
 async def manual_approve(event):
-    if not is_sudo(event.sender_id): return
-    try:
-        user_id = int(event.pattern_match.group(1))
-        days = int(event.pattern_match.group(2))
-        hours = int(event.pattern_match.group(3) or 0)
-        minutes = int(event.pattern_match.group(4) or 0)
-        expiry = await add_subscription(user_id, days, hours, minutes)
-        time_str = f"{days}d {hours}h {minutes}m"
-        await event.reply(f"✅ **Subscription Added!**\nUser: `{user_id}`\nDuration: `{time_str}`")
-        await bot.send_message(user_id, f"🎉 Premium access granted for {time_str}!", buttons=[[Button.inline("⚙️ Modules", data="modules_main")]])
-    except Exception as e:
-        await event.reply(f"❌ Error: {e}")
+    p = await get_sudo_powers(event.sender_id)
+    if not p or not p['can_pay']: return
+    
+    u, d = int(event.pattern_match.group(1)), int(event.pattern_match.group(2))
+    h, m = int(event.pattern_match.group(3) or 0), int(event.pattern_match.group(4) or 0)
+    await add_subscription(u, d, h, m)
+    await event.reply(f"✅ Added {d}d {h}h {m}m to `{u}`.")
+    try: await bot.send_message(u, "🎉 Premium Activated!")
+    except: pass
 
-# --- 4. USER INFO: /info <id> (Updated with Phone) ---
+@bot.on(events.NewMessage(pattern=r'/cancel (\d+)'))
+async def cancel_handler(event):
+    p = await get_sudo_powers(event.sender_id)
+    if not p or not p['can_pay']: return
+    user_id = int(event.pattern_match.group(1))
+    await cancel_subscription(user_id)
+    if user_id in ACTIVE_CLIENTS: await SessionManager.stop_userbot(user_id)
+    await event.reply(f"📉 **Plan Cancelled:** `{user_id}`.")
+
+# --- 5. INFO & STATS ---
+
 @bot.on(events.NewMessage(pattern=r'/info (\d+)'))
 async def user_info(event):
-    if not is_sudo(event.sender_id): return
+    if not await is_staff(event.sender_id): return
     user_id = int(event.pattern_match.group(1))
-    
     async with aiosqlite.connect(DB_FILE) as db:
         async with db.execute('SELECT phone, last_login FROM users WHERE user_id = ?', (user_id,)) as c:
             row = await c.fetchone()
             phone = row[0] if row else "N/A"
-            last_login = row[1] if row else "Never"
-
     status, time_left = await get_sub_info(user_id)
-    rem = str(time_left).split('.')[0] if time_left else "N/A"
-    is_active = "Online 🟢" if user_id in ACTIVE_CLIENTS else "Offline 🔴"
-    
-    info_text = (
-        "👤 **User Management Profile**\n\n"
-        f"🆔 **User ID:** `{user_id}`\n"
-        f"📱 **Phone:** `{phone}`\n"
-        f"📡 **Bot Status:** `{is_active}`\n"
-        f"💳 **Subscription:** `{status}`\n"
-        f"⏳ **Remaining Time:** `{rem}`\n"
-        f"📅 **Last Login:** `{last_login}`"
-    )
-    await event.reply(info_text)
+    claimed = await has_claimed_trial(user_id)
+    trial_status = "Claimed (0) ❌" if claimed else "Available (1) ✅"
+    is_live = "Online 🟢" if user_id in ACTIVE_CLIENTS else "Offline 🔴"
+    await event.reply(f"👤 **Info:** `{user_id}`\n📱 **Phone:** `{phone}`\n🎁 **Trial:** {trial_status}\n📡 **Status:** {is_live}\n💳 **Plan:** {status}\n⏳ **Left:** {str(time_left).split('.')[0] if time_left else '0'}")
 
-# --- 5. BROADCAST, BAN, UNBAN, TRANSFER (Same as before) ---
+@bot.on(events.NewMessage(pattern='/stats'))
+async def bot_stats(event):
+    if not await is_staff(event.sender_id): return
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT COUNT(*) FROM users') as c1: u_count = (await c1.fetchone())[0]
+        async with db.execute('SELECT COUNT(*) FROM subscriptions WHERE status="active"') as c2: s_count = (await c2.fetchone())[0]
+    await event.reply(f"📊 **Stats:** Users: {u_count} | Active: {s_count} | Live: {len(ACTIVE_CLIENTS)}")
+
+# --- 6. OWNER ONLY ---
+
 @bot.on(events.NewMessage(pattern=r'/broadcast (.*)'))
 async def broadcast_handler(event):
     if event.sender_id != ADMIN_ID: return
     msg = event.pattern_match.group(1)
     status_msg = await event.reply("📣 Broadcasting...")
     async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('SELECT user_id FROM users') as cursor:
-            rows = await cursor.fetchall()
+        async with db.execute('SELECT user_id FROM users') as cursor: rows = await cursor.fetchall()
     done, failed = 0, 0
     for row in rows:
-        try:
-            await bot.send_message(row[0], msg)
-            done += 1
-            await asyncio.sleep(0.3)
-        except errors.FloodWaitError as e: await asyncio.sleep(e.seconds)
+        try: await bot.send_message(row[0], msg); done += 1; await asyncio.sleep(0.3)
         except: failed += 1
-    await status_msg.edit(f"📣 Broadcast Done!\n✅ Sent: {done} | ❌ Failed: {failed}")
-
-@bot.on(events.NewMessage(pattern=r'/ban (\d+)'))
-async def ban_handler(event):
-    if not is_sudo(event.sender_id): return
-    user_id = int(event.pattern_match.group(1))
-    await ban_user(user_id)
-    await event.reply(f"🚫 User `{user_id}` Banned.")
-
-@bot.on(events.NewMessage(pattern=r'/unban (\d+)'))
-async def unban_handler(event):
-    if not is_sudo(event.sender_id): return
-    user_id = int(event.pattern_match.group(1))
-    await unban_user(user_id)
-    await event.reply(f"✅ User `{user_id}` Unbanned.")
-
-@bot.on(events.NewMessage(pattern=r'/transfer (\d+) (\d+)'))
-async def transfer_handler(event):
-    if not is_sudo(event.sender_id): return
-    f, t = int(event.pattern_match.group(1)), int(event.pattern_match.group(2))
-    s, m = await transfer_subscription(f, t)
-    await event.reply(f"♻️ {m}" if s else f"❌ {m}")
+    await status_msg.edit(f"📣 Broadcast Finished!\n✅ Sent: {done} | ❌ Failed: {failed}")
 
 @bot.on(events.NewMessage(pattern=r'/reset_trial (\d+)'))
 async def reset_trial_handler(event):
-    if not is_sudo(event.sender_id): return
+    if event.sender_id != ADMIN_ID: return
     u = int(event.pattern_match.group(1))
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute('DELETE FROM trials WHERE user_id = ?', (u,))
         await db.commit()
     await event.reply(f"🎁 Trial reset for `{u}`.")
+
+@bot.on(events.NewMessage(pattern=r'/transfer (\d+) (\d+)'))
+async def transfer_handler(event):
+    if event.sender_id != ADMIN_ID: return
+    f, t = int(event.pattern_match.group(1)), int(event.pattern_match.group(2))
+    s, m = await transfer_subscription(f, t)
+    await event.reply(f"♻️ {m}")
