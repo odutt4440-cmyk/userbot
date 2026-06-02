@@ -37,21 +37,25 @@ async def send_start_menu(event, edit=False):
     ]
 
     try:
+        # DB se cached File ID uthao
         if not START_MEDIA:
             START_MEDIA = await get_setting("START_PIC_ID")
 
         if edit:
             await event.edit(welcome_text, buttons=buttons)
         else:
+            # FIX: Agar START_MEDIA text hai, toh usey use karo, warna local path (START_PIC)
             sent_msg = await bot.send_file(
                 event.chat_id, 
                 START_MEDIA if START_MEDIA else START_PIC, 
                 caption=welcome_text, 
                 buttons=buttons
             )
-            if not START_MEDIA and sent_msg.media:
-                START_MEDIA = str(sent_msg.media)
-                await set_setting("START_PIC_ID", START_MEDIA)
+            # FIX: Pehli baar upload hone par sirf photo ki ID save karo (Text format me)
+            if not START_MEDIA and sent_msg.photo:
+                START_MEDIA = sent_msg.photo # Ye memory me object rakhega
+                # Database me sirf raw ID save karo jo dubara use ho sake
+                await set_setting("START_PIC_ID", str(sent_msg.photo.id))
                 
     except Exception as e:
         print(f"Start Menu Error: {e}")
