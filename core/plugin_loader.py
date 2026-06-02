@@ -4,24 +4,29 @@ import os
 
 log = logging.getLogger(__name__)
 
-# Ye function games ko user ke client par "Register" karega
+# Ye function saare userbot modules (Games, Fun, Admin) ko client par register karta hai
 async def load_all_modules(client):
-    # Modules ki list (Tu yahan naye games add kar sakta hai)
+    # Modules ki list - Yahan humne Fun category ka Clone tool add kiya hai
     modules_to_load = [
+        # --- Game Modules ---
         "modules.games.wordly.wordly",
         "modules.games.wordseek.wordseek",
         "modules.games.wordchain.wordchain",
-        "modules.games.octopus.octopus"
+        "modules.games.octopus.octopus",
+        
+        # --- Fun Modules ---
+        "modules.fun.clone" # <--- Naya Clone Tool yahan add ho gaya
     ]
     
     for module_path in modules_to_load:
         try:
-            # Game ki file ko import karna
+            # Module ko dynamic import karna
             module = importlib.import_module(module_path)
-            # Uske 'register' function ko call karna
+            # Har module mein 'register' function hona zaroori hai
             module.register(client)
             log.info(f"Successfully registered: {module_path}")
         except Exception as e:
             log.error(f"Failed to load module {module_path}: {e}")
 
-# Note: Agar future mein koi naya game dalo, toh bas upar list mein naam add kar dena.
+# Hint: Future mein agar 'BanAll' ya 'PMPermit' jaise tools banaoge, 
+# toh bas unka path is list mein daal dena.
