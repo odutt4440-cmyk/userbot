@@ -15,7 +15,10 @@ from database import (
     get_sub_info,
     remove_user_session,
     has_claimed_trial,
-    DB_FILE
+    is_staff,
+    get_sudo_info, 
+    DB_FILE,
+    set_maintenance
 )
 
 # --- NEW SUDO POWER HELPERS ---
@@ -107,19 +110,31 @@ async def logout_handler(event):
     await remove_user_session(user_id)
     await event.reply(f"✅ **Logout Successful:** `{user_id}` terminated.")
 
-# --- 3. BAN SYSTEM (Powers: can_ban) ---
 
-@bot.on(events.NewMessage(pattern=r'/ban (\d+)'))
+
+# --- 2. BAN USER (With Reason Support) ---
+@bot.on(events.NewMessage(pattern=r'/ban (\d+)(?:\s+(.*))?'))
 async def ban_handler(event):
+    # Power check: Ban power needed
     p = await get_sudo_powers(event.sender_id)
-    if not p or not p['can_ban']: return
+    if not p or not p['can_ban']: 
+        return await event.reply("❌ You don't have 'Ban' permission.")
     
     user_id = int(event.pattern_match.group(1))
-    await ban_user(user_id)
+    reason = event.pattern_match.group(2) or "No reason provided by Admin."
+    
+    await ban_user(user_id, reason)
+    
+    # Session stop logic
     if user_id in ACTIVE_CLIENTS:
         await SessionManager.stop_userbot(user_id)
-    await event.reply(f"🚫 **User Banned:** `{user_id}`.")
-
+        
+    await event.reply(f"🚫 **User Banned:** `{user_id}`\n📝 **Reason:** {reason}")
+    
+    try:
+        await bot.send_message(user_id, f"❌ **You have been banned!**\n\n**Reason:** {reason}\n\nContact support if this is a mistake.")
+    except: pass
+        
 @bot.on(events.NewMessage(pattern=r'/unban (\d+)'))
 async def unban_handler(event):
     p = await get_sudo_powers(event.sender_id)
@@ -206,6 +221,21 @@ async def transfer_handler(event):
     s, m = await transfer_subscription(f, t)
     await event.reply(f"♻️ {m}")
 
+# --- 8. MAINTENANCE MODE (Owner Only) ---
+# Usage: /maintenance on <message> OR /maintenance off
+@bot.on(events.NewMessage(pattern=r'/maintenance (on|off)(?:\s+(.*))?'))
+async def maintenance_handler(event):
+    if event.sender_id != ADMIN_ID: 
+        return # Sudo users maintenance control nahi kar sakte
+
+    status = event.pattern_match.group(1).lower()
+    maint_text = event.pattern_match.group(2) or "Bot is under maintenance for updates. Please try again later."
+    
+    await set_maintenance(status, maint_text)
+    
+    status_emoji = "🛠️ ON" if status == "on" else "✅ OFF"
+    await event.reply(f"⚙️ **Maintenance Mode:** {status_emoji}\n\n**Display Text:** {maint_text}")
+
 
 # --- STAFF HELP CENTER (Owner & Sudo Only) ---
 @bot.on(events.NewMessage(pattern=r'(?i)^/sudohelp'))
@@ -236,12 +266,13 @@ async def sudo_help(event):
         help_msg += "• `/transfer <FromID> <ToID>` - Move subscription\n"
         help_msg += "  👉 _Ex: /transfer 111 222_\n"
         help_msg += "• `/reset_trial <ID>` - Allow trial again\n\n"
+        help_msg += "• `/maintenance <on/off> <msg>` - Master Switch\n"
 
     # --- BAN MANAGEMENT ---
     if is_owner or (powers and powers[0] == 1): # can_ban power
         help_msg += "🚫 **Security & Bans:**\n"
-        help_msg += "• `/ban <ID>` - Block user and stop their bot\n"
-        help_msg += "  👉 _Ex: /ban 1234567_\n"
+        help_msg += "• `/ban <ID> <Reason>` - Block with reason\n"
+        help_msg += "  👉 _Ex: /ban 1234567_reason\n"
         help_msg += "• `/unban <ID>` - Restore user access\n\n"
 
     # --- FINANCIAL & SYSTEM TOOLS ---
