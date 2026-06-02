@@ -148,7 +148,8 @@ async def get_sub_info(user_id):
 
 async def cancel_subscription(user_id):
     async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('UPDATE subscriptions SET status = "expired" WHERE user_id = ?', (user_id,))
+        now = datetime.datetime.now().isoformat()
+        await db.execute('UPDATE subscriptions SET status = "expired", expiry_date = ? WHERE user_id = ?', (now, user_id))
         await db.commit()
 
 async def transfer_subscription(from_id, to_id):
