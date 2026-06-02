@@ -10,7 +10,6 @@ START_MEDIA = None
 # --- HELPER: PRIVATE ONLY CHECK ---
 async def is_private_only(event):
     if not event.is_private:
-        # Group me bot sirf ye message bhejega agar koi command use karega
         await event.reply("❌ **Security Alert!**\n\nFor your account safety, this bot only works in **Private DM**.\n\n👉 [Click here to start bot](t.me/YourBotUsername)")
         return False
     return True
@@ -54,8 +53,7 @@ async def send_start_menu(event, edit=False):
         if edit: await event.edit(welcome_text, buttons=buttons)
         else: await event.respond(welcome_text, buttons=buttons)
 
-# --- 2. COMMAND HANDLERS (/start, /help, /modules) ---
-
+# --- 2. COMMAND HANDLERS ---
 @bot.on(events.NewMessage(pattern=r'(?i)^/start'))
 async def start_handler(event):
     if not await is_private_only(event): return
@@ -68,50 +66,51 @@ async def start_handler(event):
 @bot.on(events.NewMessage(pattern=r'(?i)^/help'))
 async def help_handler(event):
     if not await is_private_only(event): return
-    help_text = (
-        "📖 **Empire Community Help Guide**\n\n"
-        "**Available Commands:**\n"
-        "• `/start` - Main Menu\n"
-        "• `/modules` - Modules List\n"
-        "• `/help` - Help Guide\n\n"
-        "**Setup Steps:**\n"
-        "1. Generate String Session.\n"
-        "2. Choose Module and Link String.\n"
-        "3. Claim Trial or Pay ₹10.\n"
-        "4. Click Activate."
-    )
+    help_text = "📖 **Help Guide**\n\nUse buttons below to explore and activate modules."
     await event.reply(help_text, buttons=[[Button.inline("⚙️ Open Modules", data="modules_main")]])
 
 @bot.on(events.NewMessage(pattern=r'(?i)^/modules'))
 async def modules_cmd(event):
     if not await is_private_only(event): return
-    # Seedha modules menu dikhayega
     await modules_main(event, edit=False)
 
-# --- 3. CALLBACK HANDLERS ---
-
+# --- 3. CATEGORY HANDLERS ---
 @bot.on(events.CallbackQuery(data="modules_main"))
 async def modules_main(event, edit=True):
     text = "📂 **Select a Category:**\n\nChoose the type of automation you want to deploy."
     buttons = [
-        [Button.inline("👮 Admin Tools", data="admin_ub"), Button.inline("🎮 Game Bots", data="games_ub")],
+        [Button.inline("👮 Admin Tools", data="admin_ub"), Button.inline("🥳 Fun Tools", data="fun_ub")],
+        [Button.inline("🎮 Game Bots", data="games_ub")],
         [Button.inline("🔙 Back to Menu", data="start_back")]
     ]
     if edit: await event.edit(text, buttons=buttons)
     else: await event.respond(text, buttons=buttons)
 
+# --- 4. FUN TOOLS MENU (LOCK AUTOMATICALLY) ---
+@bot.on(events.CallbackQuery(data="fun_ub"))
+async def fun_menu(event):
+    text = (
+        "🥳 **Userbot Fun Modules**\n\n"
+        "**Identity Clone Tool:**\n"
+        "Commands: Reply to a user with `.clone` to steal their profile. "
+        "Use `.revert` to get your original identity back."
+    )
+    # mod_clone use kiya hai taaki login/payment gate trigger ho jaye
+    buttons = [
+        [Button.inline("Clone Identity", data="mod_clone")],
+        [Button.inline("🔙 Back", data="modules_main")]
+    ]
+    await event.edit(text, buttons=buttons)
+
+# --- 5. GAMES MENU ---
 @bot.on(events.CallbackQuery(data="games_ub"))
 async def games_menu(event):
     text = (
         "🎮 **Userbot Game Modules**\n\n"
-        "**WordSeek Solver:**\n"
-        "Commands: `.ws on` | `.ws loop on` | `.ws delay 0.5 1.5`\n\n"
-        "**WordChain Pro:**\n"
-        "Commands: `on1` | `yes` | `autoplay on` | `spam random` | `settime 1 3`\n\n"
-        "**Octopus Engine:**\n"
-        "Commands: `/game@OctopusEN_Bot` | `.octo delay 2.6 3.2`\n\n"
-        "**Wordly Master:**\n"
-        "Commands: `.won` | `.woff` | `.wloop on` | `.wstatus`"
+        "**WordSeek Solver:** `.ws on` | `.ws loop on`\n"
+        "**WordChain Pro:** `on1` | `autoplay on` | `spam random`\n"
+        "**Octopus Engine:** `/game@OctopusEN_Bot` | `.octo delay 2.6 3.2`\n"
+        "**Wordly Master:** `.won` | `.woff` | `.wloop on`"
     )
     buttons = [
         [Button.inline("WordSeek", data="mod_wordseek"), Button.inline("WordChain", data="mod_wordchain")],
@@ -120,6 +119,7 @@ async def games_menu(event):
     ]
     await event.edit(text, buttons=buttons)
 
+# --- 6. TRIAL & CALLBACKS ---
 @bot.on(events.CallbackQuery(data="claim_trial_btn"))
 async def trial_handler(event):
     user_id = event.sender_id
@@ -129,7 +129,7 @@ async def trial_handler(event):
     success, result = await claim_trial(user_id)
     if success:
         await event.answer("🎉 24-Hour Trial Activated!", alert=True)
-        await event.edit("🎁 **Free Trial Activated!**\n\nAccess granted for 24 hours. Go to modules and start your userbot now! 🚀", 
+        await event.edit("🎁 **Free Trial Activated!**\n\nAccess granted for 24 hours. Start your userbot now! 🚀", 
                          buttons=[[Button.inline("⚙️ Open Modules", data="modules_main")]])
     else:
         await event.answer(f"❌ Error: {result}", alert=True)
@@ -140,6 +140,6 @@ async def callback_handler(event):
     if data == "start_back":
         await send_start_menu(event, edit=True)
     elif data == "rules":
-        await event.answer("1. No spamming\n2. Maintain subscription\n3. Respect community", alert=True)
+        await event.answer("1. One trial per user.\n2. No spamming commands.\n3. Respect community", alert=True)
     elif data == "dev_info":
-        await event.answer("Developed by: @YourUsername\nSystem: SQLite Fast Engine v2.0", alert=True)
+        await event.answer("Developed by: @YourUsername\nSystem: SQLite Engine v2.1", alert=True)
