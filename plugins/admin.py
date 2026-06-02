@@ -179,7 +179,7 @@ async def bot_stats(event):
 
 @bot.on(events.NewMessage(pattern=r'/broadcast (.*)'))
 async def broadcast_handler(event):
-    if event.sender_id != ADMIN_ID: return
+    if not await is_staff(event.sender_id): return # Fixed: Staff can broadcast now
     msg = event.pattern_match.group(1)
     status_msg = await event.reply("📣 Broadcasting...")
     async with aiosqlite.connect(DB_FILE) as db:
