@@ -104,6 +104,10 @@ async def management_menu(event):
         "**General Info Tools:**\n"
         "• `.id` - Get Chat/User ID.\n"
         "• `.info` - Reply to see full user details."
+        "**📢 Tagging Tools:**\n"
+        "• `.tagall <msg>` - Mention everyone in the group.\n"
+        "• `.stopall` - Stop the active tag process.\n"
+        "• `.tagdelay <sec>` - Set delay (Default 3s)."
     )
     buttons = [
         [Button.inline("Deploy Management", data="mod_management")],
@@ -126,21 +130,39 @@ async def fun_menu(event):
     ]
     await event.edit(text, buttons=buttons)
 
-# --- 6. GAMES MENU ---
 @bot.on(events.CallbackQuery(data="games_ub"))
 async def games_menu(event):
+    # Professional list of ALL available commands inside the files
     text = (
         "🎮 **Userbot Game Modules**\n\n"
-        "**WordSeek Solver:** `.ws on` | `.ws loop on`\n"
-        "**WordChain Pro:** `on1` | `autoplay on` | `spam random`\n"
-        "**Octopus Engine:** `/game@OctopusEN_Bot` | `.octo delay 2.6 3.2`\n"
-        "**Wordly Master:** `.won` | `.woff` | `.wloop on`| `.wloop off`"
+        "Deploy high-speed solvers. Use these commands in any chat once active:\n\n"
+        "🧩 **WordSeek Solver:**\n"
+        "• `.ws on` | `.ws off` — Toggle Solver\n"
+        "• `.ws loop on` | `.ws loop off` — Auto Restart\n"
+        "• `.ws delay 0.5 1.5` — Set Min/Max speed\n\n"
+        "📝 **Wordly Master:**\n"
+        "• `.won` | `.woff` — Toggle Automation\n"
+        "• `.wloop on` | `.wloop off` — Auto New Game\n"
+        "• `.wdelay 0.5` — Set Typing Delay\n"
+        "• `.wstatus` — Check Round Stats\n\n"
+        "🐙 **Octopus Engine:**\n"
+        "• `/game@OctopusEN_Bot` — Lock & Solve\n"
+        "• `.octo delay 2.6 3.2` — Adjust Timing\n\n"
+        "⛓️ **WordChain Pro:**\n"
+        "• `on1`, `on2`... — Join specific game ID\n"
+        "• `yes` — Join last detected game\n"
+        "• `autoplay on` | `off` — Toggle Auto-play\n"
+        "• `spam random` | `spam <char>` — Ending mode\n"
+        "• `settime 1 3` — Set Min/Max delay\n"
+        "• `status` — Check all active games"
     )
+    
     buttons = [
         [Button.inline("WordSeek", data="mod_wordseek"), Button.inline("WordChain", data="mod_wordchain")],
         [Button.inline("Octopus", data="mod_octopus"), Button.inline("Wordly", data="mod_wordly")],
-        [Button.inline("🔙 Back", data="modules_main")]
+        [Button.inline("🔙 Back to Categories", data="modules_main")]
     ]
+    
     await event.edit(text, buttons=buttons)
 
 # --- 7. TRIAL & CALLBACKS ---
