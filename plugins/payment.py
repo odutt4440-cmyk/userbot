@@ -2,10 +2,19 @@ import asyncio
 from bot_instance import bot 
 from telethon import events, Button
 from config import ADMIN_ID, LOG_GROUP, SUDO_USERS
-from database import add_subscription
+from database import add_subscription, get_sudo_info # Added get_sudo_info
 
 # Tracking users currently in the payment process
 WAITING_FOR_PAYMENT = {}
+
+# --- HELPER: CHECK PAYMENT POWER ---
+async def can_user_approve(user_id):
+    if user_id == ADMIN_ID: return True # Owner can always approve
+    # Check powers from SQLite sudo_users table
+    info = await get_sudo_info(user_id)
+    if info and info[1] == 1: # Index 1 is 'can_pay' column
+        return True
+    return False
 
 # --- 1. WHEN USER CLICKS 'PAY ₹10' ---
 @bot.on(events.CallbackQuery(data="pay_now"))
@@ -14,11 +23,9 @@ async def pay_now(event):
     user = await event.get_sender()
     WAITING_FOR_PAYMENT[user_id] = True
     
-    # Intent Log: Let admins know someone is looking at the payment page
     if LOG_GROUP:
         try:
             name = user.first_name
-            username = f"@{user.username}" if user.username else "N/A"
             await bot.send_message(
                 LOG_GROUP, 
                 f"💳 **Payment Intent:** User `{name}` ({user_id}) is viewing the payment instructions."
@@ -44,14 +51,12 @@ async def receive_screenshot(event):
     
     if user_id in WAITING_FOR_PAYMENT and event.photo:
         user = await event.get_sender()
-        # Confirm to the user immediately
         await event.reply(
             "✅ **Screenshot Received!**\n"
             "Your payment has been sent to our verification group. "
             "You will receive a notification here once it is approved."
         )
         
-        # Prepare log message for Log GC
         admin_text = (
             "🔔 **NEW PAYMENT VERIFICATION**\n\n"
             f"👤 **User:** {user.first_name}\n"
@@ -60,7 +65,6 @@ async def receive_screenshot(event):
             "**Action Required:** Check the screenshot and approve if valid. 👇"
         )
         
-        # Send to LOG_GROUP for Sudo users to see
         if LOG_GROUP:
             try:
                 await bot.send_file(
@@ -73,17 +77,16 @@ async def receive_screenshot(event):
                     ]
                 )
             except Exception as e:
-                # Fallback to Admin DM if Log Group fails
                 await bot.send_file(ADMIN_ID, event.photo, caption=admin_text + f"\n\n*(Error: {e})*")
         
         del WAITING_FOR_PAYMENT[user_id]
 
-# --- 3. SUDO APPROVAL LOGIC (From Log GC) ---
+# --- 3. SUDO APPROVAL LOGIC (Power Checked) ---
 @bot.on(events.CallbackQuery(pattern=r"approve_"))
 async def approve_payment(event):
-    # Only Sudo users can approve
-    if event.sender_id not in SUDO_USERS:
-        await event.answer("⚠️ Access Denied: You are not a Sudo user.", alert=True)
+    # Permission Check: Does this sudo have 'can_pay' power?
+    if not await can_user_approve(event.sender_id):
+        await event.answer("⚠️ Access Denied: You don't have 'can_pay' permission.", alert=True)
         return
 
     target_user_id = int(event.data.decode("utf-8").replace("approve_", ""))
@@ -92,7 +95,6 @@ async def approve_payment(event):
     # Update Database using SQLite (30 Days Default)
     expiry = await add_subscription(target_user_id, days=30)
     
-    # Update the Log message to show completion
     await event.edit(
         f"✅ **Payment Approved**\n\n"
         f"🆔 **User ID:** `{target_user_id}`\n"
@@ -101,7 +103,6 @@ async def approve_payment(event):
         f"✨ Access granted for 30 days."
     )
     
-    # Notify User
     try:
         success_msg = (
             "🎉 **Subscription Activated!**\n\n"
@@ -109,20 +110,18 @@ async def approve_payment(event):
             "Go to the Modules section and fire up your userbot! 🚀"
         )
         await bot.send_message(target_user_id, success_msg, buttons=[Button.inline("⚙️ Open Modules", data="modules_main")])
-    except:
-        pass
+    except: pass
 
-# --- 4. SUDO REJECT LOGIC ---
+# --- 4. SUDO REJECT LOGIC (Power Checked) ---
 @bot.on(events.CallbackQuery(pattern=r"reject_"))
 async def reject_payment(event):
-    if event.sender_id not in SUDO_USERS:
-        await event.answer("⚠️ Unauthorized.", alert=True)
+    if not await can_user_approve(event.sender_id):
+        await event.answer("⚠️ Access Denied.", alert=True)
         return
     
     target_user_id = int(event.data.decode("utf-8").replace("reject_", ""))
     admin_name = event.sender.first_name
 
-    # Update Log Message
     await event.edit(
         f"❌ **Payment Rejected**\n\n"
         f"🆔 **User ID:** `{target_user_id}`\n"
@@ -130,7 +129,6 @@ async def reject_payment(event):
         f"Status: Transaction declined."
     )
     
-    # Notify User
     try:
         reject_msg = (
             "⚠️ **Payment Rejected**\n\n"
@@ -139,5 +137,4 @@ async def reject_payment(event):
             "If you think this is a mistake, contact our support."
         )
         await bot.send_message(target_user_id, reject_msg)
-    except:
-        pass
+    except: pass
