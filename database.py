@@ -22,7 +22,7 @@ async def init_db():
             (user_id INTEGER, game_name TEXT, data TEXT, PRIMARY KEY (user_id, game_name))''')
         
         await db.execute('''CREATE TABLE IF NOT EXISTS banned 
-            (user_id INTEGER PRIMARY KEY, banned_at TEXT)''')
+            (user_id INTEGER PRIMARY KEY, banned_at TEXT, reason TEXT)''')
 
         await db.execute('''CREATE TABLE IF NOT EXISTS trials 
             (user_id INTEGER PRIMARY KEY, claimed_at TEXT)''')
@@ -93,16 +93,22 @@ async def get_all_users():
             return await cursor.fetchall()
 
 # --- BAN SYSTEM ---
-async def ban_user(user_id):
+async def ban_user(user_id, reason="No reason provided"):
     async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('INSERT OR REPLACE INTO banned (user_id, banned_at) VALUES (?, ?)', 
-            (user_id, datetime.datetime.now().isoformat()))
+        await db.execute('INSERT OR REPLACE INTO banned (user_id, banned_at, reason) VALUES (?, ?, ?)', 
+            (user_id, datetime.datetime.now().isoformat(), reason))
         await db.commit()
 
 async def unban_user(user_id):
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute('DELETE FROM banned WHERE user_id = ?', (user_id,))
         await db.commit()
+
+async def get_ban_info(user_id):
+    """Banned hone ka time aur wajah nikalne ke liye"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT banned_at, reason FROM banned WHERE user_id = ?', (user_id,)) as cursor:
+            return await cursor.fetchone() # returns (time, reason) or None
 
 async def is_banned(user_id):
     async with aiosqlite.connect(DB_FILE) as db:
@@ -219,6 +225,19 @@ async def is_staff(user_id):
         async with db.execute('SELECT user_id FROM sudo_users WHERE user_id = ?', (user_id,)) as cursor:
             row = await cursor.fetchone()
             return True if row else False
+
+# --- MAINTENANCE LOGIC ---
+async def set_maintenance(status, message="Bot is under maintenance."):
+    """Maintenance ON/OFF karne ke liye. status: 'on'/'off'"""
+    await set_setting("MAINTENANCE_MODE", status)
+    await set_setting("MAINTENANCE_TEXT", message)
+
+async def get_maintenance():
+    """Check maintenance status and message"""
+    mode = await get_setting("MAINTENANCE_MODE")
+    text = await get_setting("MAINTENANCE_TEXT")
+    return (mode == "on", text or "Bot is under maintenance.")
+
 
 # --- PROXY OBJECTS FOR ADMIN ---
 class CollectionProxy:
