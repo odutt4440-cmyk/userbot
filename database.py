@@ -32,6 +32,8 @@ async def init_db():
 
         await db.execute('''CREATE TABLE IF NOT EXISTS warnings 
             (user_id INTEGER, chat_id INTEGER, count INTEGER, PRIMARY KEY (user_id, chat_id))''')
+        await db.execute('''CREATE TABLE IF NOT EXISTS sudo_users 
+            (user_id INTEGER PRIMARY KEY, can_ban INTEGER, can_pay INTEGER)''')
         
         await db.commit()
     log.info("✅ SQLite Engine: Database ready with Phone support.")
@@ -181,6 +183,27 @@ async def handle_warn(user_id, chat_id):
             await db.execute('INSERT OR REPLACE INTO warnings VALUES (?, ?, ?)', (user_id, chat_id, new_count))
             await db.commit()
             return new_count
+
+async def add_sudo(user_id, can_ban=0, can_pay=0):
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute('INSERT OR REPLACE INTO sudo_users VALUES (?, ?, ?)', (user_id, can_ban, can_pay))
+        await db.commit()
+
+async def remove_sudo(user_id):
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute('DELETE FROM sudo_users WHERE user_id = ?', (user_id,))
+        await db.commit()
+
+async def get_sudo_info(user_id):
+    """User ki powers check karne ke liye"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT can_ban, can_pay FROM sudo_users WHERE user_id = ?', (user_id,)) as cursor:
+            return await cursor.fetchone()
+
+async def list_all_sudos():
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT * FROM sudo_users') as cursor:
+            return await cursor.fetchall()
 
 # --- PROXY OBJECTS FOR ADMIN ---
 class CollectionProxy:
