@@ -205,3 +205,55 @@ async def transfer_handler(event):
     f, t = int(event.pattern_match.group(1)), int(event.pattern_match.group(2))
     s, m = await transfer_subscription(f, t)
     await event.reply(f"♻️ {m}")
+
+
+# --- STAFF HELP CENTER (Owner & Sudo Only) ---
+@bot.on(events.NewMessage(pattern=r'(?i)^/sudohelp'))
+async def sudo_help(event):
+    # 🛡️ Staff Check: Sirf Owner aur Sudo hi dekh sakte hain
+    from database import is_staff, get_sudo_info
+    
+    if not await is_staff(event.sender_id):
+        return # Normal users ke liye bot reply hi nahi karega
+
+    # Powers fetch karo commands dikhane ke liye
+    powers = await get_sudo_info(event.sender_id)
+    is_owner = (event.sender_id == ADMIN_ID)
+
+    help_msg = "🛡️ **Empire Admin Control Center**\n\n"
+    help_msg += "Welcome to the professional management suite. Below are the commands you can use based on your power level.\n\n"
+
+    # --- OWNER SECTION ---
+    if is_owner:
+        help_msg += "👑 **Owner Privileges (Exclusive):**\n"
+        help_msg += "• `/addsudo <ID> <Ban> <Pay>` - Add new staff\n"
+        help_msg += "  👉 _Ex: /addsudo 1234567 1 1_ (Full Power)\n"
+        help_msg += "• `/rmsudo <ID>` - Remove a staff member\n"
+        help_msg += "  👉 _Ex: /rmsudo 1234567_\n"
+        help_msg += "• `/sudolist` - View current staff members\n"
+        help_msg += "• `/broadcast <Msg>` - Message all bot users\n"
+        help_msg += "  👉 _Ex: /broadcast Bot updated!_\n"
+        help_msg += "• `/transfer <FromID> <ToID>` - Move subscription\n"
+        help_msg += "  👉 _Ex: /transfer 111 222_\n"
+        help_msg += "• `/reset_trial <ID>` - Allow trial again\n\n"
+
+    # --- BAN MANAGEMENT ---
+    if is_owner or (powers and powers[0] == 1): # can_ban power
+        help_msg += "🚫 **Security & Bans:**\n"
+        help_msg += "• `/ban <ID>` - Block user and stop their bot\n"
+        help_msg += "  👉 _Ex: /ban 1234567_\n"
+        help_msg += "• `/unban <ID>` - Restore user access\n\n"
+
+    # --- FINANCIAL & SYSTEM TOOLS ---
+    if is_owner or (powers and powers[1] == 1): # can_pay power
+        help_msg += "💳 **Management & Billing:**\n"
+        help_msg += "• `/approve <ID> <D> <H> <M>` - Add manual time\n"
+        help_msg += "  👉 _Ex: /approve 123 30 0 0_ (Add 30 days)\n"
+        help_msg += "  👉 _Ex: /approve 123 0 2 30_ (Add 2hr 30m)\n"
+        help_msg += "• `/cancel <ID>` - Terminate premium plan\n"
+        help_msg += "• `/logout <ID>` - Permanent session termination\n"
+        help_msg += "• `/active` - List currently running userbots\n"
+        help_msg += "• `/info <ID>` - Check phone, trial & expiry info\n"
+        help_msg += "• `/stats` - View global bot statistics\n"
+
+    await event.reply(help_msg)
