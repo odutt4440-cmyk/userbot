@@ -10,7 +10,12 @@ START_MEDIA = None
 # --- HELPER: PRIVATE ONLY CHECK ---
 async def is_private_only(event):
     if not event.is_private:
-        await event.reply("❌ **Security Alert!**\n\nFor your account safety, this bot only works in **Private DM**.\n\n👉 [Click here to start bot](t.me/YourBotUsername)")
+        await event.reply(
+            "❌ **Access Denied!**\n\n"
+            "This bot is configured to work only in **Private DM** for security.\n\n"
+            "👉 Please click the button below to use me in private.",
+            buttons=[[Button.url("📩 Open Private Chat", "t.me/YourBotUsername")]] # Update username
+        )
         return False
     return True
 
@@ -20,7 +25,7 @@ async def send_start_menu(event, edit=False):
     welcome_text = (
         "👋 **Welcome to Userbot Community!**\n\n"
         "Transform your Telegram account into a powerful userbot empire. "
-        "High-speed games, automation tools, and fun modules at your fingertips.\n\n"
+        "High-speed games, automation tools, and management modules at your fingertips.\n\n"
         "Navigate using the buttons below to get started. 👇"
     )
     
@@ -66,7 +71,7 @@ async def start_handler(event):
 @bot.on(events.NewMessage(pattern=r'(?i)^/help'))
 async def help_handler(event):
     if not await is_private_only(event): return
-    help_text = "📖 **Help Guide**\n\nUse buttons below to explore and activate modules."
+    help_text = "📖 **Help Guide**\n\nUse buttons below to explore and activate premium modules."
     await event.reply(help_text, buttons=[[Button.inline("⚙️ Open Modules", data="modules_main")]])
 
 @bot.on(events.NewMessage(pattern=r'(?i)^/modules'))
@@ -79,30 +84,49 @@ async def modules_cmd(event):
 async def modules_main(event, edit=True):
     text = "📂 **Select a Category:**\n\nChoose the type of automation you want to deploy."
     buttons = [
-        [Button.inline("👮 Admin Tools", data="admin_ub"), Button.inline("🥳 Fun Tools", data="fun_ub")],
+        [Button.inline("🛡️ Management", data="management_ub"), Button.inline("🥳 Fun Tools", data="fun_ub")],
         [Button.inline("🎮 Game Bots", data="games_ub")],
         [Button.inline("🔙 Back to Menu", data="start_back")]
     ]
     if edit: await event.edit(text, buttons=buttons)
     else: await event.respond(text, buttons=buttons)
 
-# --- 4. FUN TOOLS MENU (LOCK AUTOMATICALLY) ---
+# --- 4. MANAGEMENT TOOLS MENU ---
+@bot.on(events.CallbackQuery(data="management_ub"))
+async def management_menu(event):
+    text = (
+        "🛡️ **Userbot Management Modules**\n\n"
+        "**Group Admin Tools:**\n"
+        "• `.ban` - Reply to a user to ban them.\n"
+        "• `.mute` - Reply to a user to mute them.\n"
+        "• `.warn` - Give a warning (3 warns = Auto Ban).\n"
+        "• `.banall` - Clean a group (Bans all non-admins).\n\n"
+        "**General Info Tools:**\n"
+        "• `.id` - Get Chat/User ID.\n"
+        "• `.info` - Reply to see full user details."
+    )
+    buttons = [
+        [Button.inline("Deploy Management", data="mod_management")],
+        [Button.inline("🔙 Back", data="modules_main")]
+    ]
+    await event.edit(text, buttons=buttons)
+
+# --- 5. FUN TOOLS MENU ---
 @bot.on(events.CallbackQuery(data="fun_ub"))
 async def fun_menu(event):
     text = (
         "🥳 **Userbot Fun Modules**\n\n"
         "**Identity Clone Tool:**\n"
-        "Commands: Reply to a user with `.clone` to steal their profile. "
-        "Use `.revert` to get your original identity back."
+        "• `.clone` - Reply to any user to steal their Name, Bio, and Photo.\n"
+        "• `.revert` - Reset your profile back to original identity."
     )
-    # mod_clone use kiya hai taaki login/payment gate trigger ho jaye
     buttons = [
-        [Button.inline("Clone Identity", data="mod_clone")],
+        [Button.inline("Deploy Clone Tool", data="mod_clone")],
         [Button.inline("🔙 Back", data="modules_main")]
     ]
     await event.edit(text, buttons=buttons)
 
-# --- 5. GAMES MENU ---
+# --- 6. GAMES MENU ---
 @bot.on(events.CallbackQuery(data="games_ub"))
 async def games_menu(event):
     text = (
@@ -119,12 +143,12 @@ async def games_menu(event):
     ]
     await event.edit(text, buttons=buttons)
 
-# --- 6. TRIAL & CALLBACKS ---
+# --- 7. TRIAL & CALLBACKS ---
 @bot.on(events.CallbackQuery(data="claim_trial_btn"))
 async def trial_handler(event):
     user_id = event.sender_id
     if await has_claimed_trial(user_id):
-        await event.answer("⚠️ You have already claimed your trial!", alert=True)
+        await event.answer("⚠️ You have already used your free trial!", alert=True)
         return
     success, result = await claim_trial(user_id)
     if success:
@@ -142,4 +166,4 @@ async def callback_handler(event):
     elif data == "rules":
         await event.answer("1. One trial per user.\n2. No spamming commands.\n3. Respect community", alert=True)
     elif data == "dev_info":
-        await event.answer("Developed by: @YourUsername\nSystem: SQLite Engine v2.1", alert=True)
+        await event.answer("Developed by: @YourUsername\nSystem: SQLite Fast Engine v2.5", alert=True)
