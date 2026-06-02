@@ -29,6 +29,9 @@ async def init_db():
             
         await db.execute('''CREATE TABLE IF NOT EXISTS settings 
             (key TEXT PRIMARY KEY, value TEXT)''')
+
+        await db.execute('''CREATE TABLE IF NOT EXISTS warnings 
+            (user_id INTEGER, chat_id INTEGER, count INTEGER, PRIMARY KEY (user_id, chat_id))''')
         
         await db.commit()
     log.info("✅ SQLite Engine: Database ready with Phone support.")
@@ -169,6 +172,15 @@ async def get_game_state(user_id, game_name):
         async with db.execute('SELECT data FROM game_state WHERE user_id = ? AND game_name = ?', (user_id, game_name)) as cursor:
             row = await cursor.fetchone()
             return json.loads(row[0]) if row else {}
+
+async def handle_warn(user_id, chat_id):
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT count FROM warnings WHERE user_id = ? AND chat_id = ?', (user_id, chat_id)) as cursor:
+            row = await cursor.fetchone()
+            new_count = (row[0] + 1) if row else 1
+            await db.execute('INSERT OR REPLACE INTO warnings VALUES (?, ?, ?)', (user_id, chat_id, new_count))
+            await db.commit()
+            return new_count
 
 # --- PROXY OBJECTS FOR ADMIN ---
 class CollectionProxy:
