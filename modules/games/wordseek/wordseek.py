@@ -34,11 +34,11 @@ def register(client):
     # --- Per-User State ---
     client.ws_enabled = True
     client.ws_chat = None
-    client.ws_delay_min = 0.05
-    client.ws_delay_max = 0.15
+    client.ws_delay_min = 0.05 # Default delay
+    client.ws_delay_max = 0.15 # Default delay
     client.ws_mode = 5
     client.ws_loop = False
-    client.ws_loop_cmd = "/new" # Default
+    client.ws_loop_cmd = "/new" 
     
     client.ws_words = ALL5.copy()
     client.ws_common = COMMON5.copy()
@@ -132,10 +132,8 @@ def register(client):
         v_common = [w for w in client.ws_common if valid_word(w) and w.lower() not in client.ws_used]
         v_all = [w for w in client.ws_words if valid_word(w) and w.lower() not in client.ws_used]
         if not client.ws_used: return STARTERS.get(client.ws_mode, "Slate")
-        
         pool = v_common if v_common else v_all
         if not pool: return None
-        
         freq = Counter()
         for w in pool:
             for char in set(w.lower()): freq[char] += 1
@@ -155,6 +153,13 @@ def register(client):
         client.ws_loop = event.pattern_match.group(1).lower() == "on"
         await event.edit(f"{'♻️' if client.ws_loop else '❌'} **Auto Loop {'Enabled' if client.ws_loop else 'Disabled'}**")
 
+    # NEW: Delay command added back!
+    @client.on(events.NewMessage(chats='me', pattern=r"(?i)^\.ws delay (\d+\.?\d*) (\d+\.?\d*)$"))
+    async def set_delay(event):
+        client.ws_delay_min = float(event.pattern_match.group(1))
+        client.ws_delay_max = float(event.pattern_match.group(2))
+        await event.edit(f"⚡ **WordSeek Delay Set:** {client.ws_delay_min}s - {client.ws_delay_max}s")
+
     # =========================================
     # MAIN ENGINE
     # =========================================
@@ -162,9 +167,8 @@ def register(client):
     async def detect_new_game(event):
         if not client.ws_enabled: return
         text = event.raw_text.lower().strip()
-        # Ab ye /new, /new4, /new6 sabko capture karega
         if text.startswith("/new"):
-            client.ws_loop_cmd = text # Loop ke liye command save kar li
+            client.ws_loop_cmd = text
             client.ws_chat = event.chat_id
             reset_state()
             if "4" in text: load_mode(4)
@@ -174,7 +178,6 @@ def register(client):
     @client.on(events.NewMessage)
     async def solver(event):
         if not client.ws_enabled or event.chat_id != client.ws_chat: return
-        
         sender = await event.get_sender()
         if not sender: return
         sender_username = getattr(sender, "username", "") or "" 
@@ -182,11 +185,12 @@ def register(client):
         
         text = event.raw_text
 
-        # --- GAME END DETECTION (The Fix) ---
+        # --- GAME END DETECTION (Loop Fixed) ---
         if any(x in text for x in ["Congrats!", "Game Over!"]):
             reset_state()
             if client.ws_loop and client.ws_loop_cmd:
-                await asyncio.sleep(random.uniform(2.0, 4.0)) # Thoda wait karke naya game chalu
+                # Wait before starting new game to look natural
+                await asyncio.sleep(random.uniform(2.5, 4.5)) 
                 await client.send_message(client.ws_chat, client.ws_loop_cmd)
             return
 
@@ -194,11 +198,11 @@ def register(client):
             guess = get_next_guess()
             if guess:
                 client.ws_used.add(guess.lower())
+                # Delay integrated here
                 await asyncio.sleep(random.uniform(client.ws_delay_min, client.ws_delay_max))
                 await client.send_message(event.chat_id, guess)
             return
 
-        # Feedback Parsing
         res = parse_feedback(text)
         if not res: return
         guess, feedback = res
@@ -210,5 +214,6 @@ def register(client):
         if next_guess:
             client.ws_used.add(next_guess.lower())
             async with client.action(event.chat_id, "typing"):
+                # Delay integrated here too
                 await asyncio.sleep(random.uniform(client.ws_delay_min, client.ws_delay_max))
                 await client.send_message(event.chat_id, next_guess)
