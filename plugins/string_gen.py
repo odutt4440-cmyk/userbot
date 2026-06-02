@@ -6,10 +6,11 @@ from telethon.errors import (
     ApiIdInvalidError, 
     PhoneNumberInvalidError, 
     PhoneCodeInvalidError, 
-    SessionPasswordNeededError
+    SessionPasswordNeededError,
+    FloodWaitError
 )
 from config import API_ID, API_HASH
-from database import save_user_session # <--- Session save karne ke liye
+from database import save_user_session
 
 # User state tracker
 GEN_DATA = {}
@@ -17,12 +18,18 @@ GEN_DATA = {}
 # --- 1. START GENERATION ---
 @bot.on(events.CallbackQuery(data="gen_string_internal"))
 async def start_string_gen(event):
+    # Security: Ensure this only works in DM
+    if not event.is_private:
+        await event.answer("⚠️ This tool only works in Private DM.", alert=True)
+        return
+
     user_id = event.sender_id
     GEN_DATA[user_id] = {"step": "phone"}
     
     await event.edit(
         "🔑 **String Session Generator**\n\n"
-        "I will help you generate a Telethon String Session securely.\n\n"
+        "I will help you generate a Telethon String Session securely. "
+        "The string will be automatically linked to your account.\n\n"
         "**Step 1:** Please send your **Phone Number** with country code.\n"
         "Example: `+919876543210`",
         buttons=[Button.inline("❌ Cancel", data="start_back")]
@@ -31,6 +38,10 @@ async def start_string_gen(event):
 # --- 2. INPUT HANDLER ---
 @bot.on(events.NewMessage)
 async def handle_gen_input(event):
+    # 🛡️ SECURITY FIX: Ignore all group messages
+    if not event.is_private:
+        return
+
     user_id = event.sender_id
     if user_id not in GEN_DATA or event.text.startswith('/'):
         return
@@ -55,11 +66,15 @@ async def handle_gen_input(event):
             
             await msg.edit(
                 "✅ **OTP Sent Successfully!**\n\n"
-                "Please send the code here in this format:\n"
-                "👉 `1 2 3 4 5` (spaces between digits)."
+                "Please check your Telegram app and send the code here in this format:\n"
+                "👉 `1 2 3 4 5` (spaces between digits are mandatory)."
             )
+        except FloodWaitError as f:
+            await msg.edit(f"❌ **Telegram Limit Hit:**\n\nPlease wait for `{f.seconds}` seconds before trying again. This is a Telegram security restriction.")
+            await tmp_client.disconnect()
+            del GEN_DATA[user_id]
         except Exception as e:
-            await msg.edit(f"❌ **Error:** `{str(e)}` \nTry again with /start.")
+            await msg.edit(f"❌ **Error:** `{str(e)}` \nPlease check your number and try /start again.")
             await tmp_client.disconnect()
             del GEN_DATA[user_id]
 
@@ -80,11 +95,11 @@ async def handle_gen_input(event):
             await save_user_session(user_id, string, phone)
             
             success_text = (
-                "🎯 **Session Generated & Linked!**\n\n"
-                f"🏷️ **Phone:** `{phone}`\n"
+                "🎯 **Session Successfully Linked!**\n\n"
+                f"📱 **Phone:** `{phone}`\n"
                 f"🔑 **String:** `{string}`\n\n"
-                "✅ This session has been automatically linked to your account. "
-                "You can now go to Modules and fire up your bot!"
+                "✅ Your account is now connected to our SaaS engine. "
+                "You can now activate your userbot modules."
             )
             await msg.edit(success_text, buttons=[[Button.inline("⚙️ Go to Modules", data="modules_main")]])
             await tmp_client.disconnect()
@@ -92,15 +107,19 @@ async def handle_gen_input(event):
             
         except SessionPasswordNeededError:
             state["step"] = "password"
-            await msg.edit("🔐 **Two-Step Verification detected.**\nPlease send your account password below.")
+            await msg.edit("🔐 **Two-Step Verification (2FA) Detected.**\nPlease send your account cloud password below.")
+        except PhoneCodeInvalidError:
+            await msg.edit("❌ **Invalid OTP!**\nPlease make sure you sent the correct code with spaces.")
         except Exception as e:
-            await msg.edit(f"❌ **OTP Error:** `{str(e)}`")
+            await msg.edit(f"❌ **Auth Error:** `{str(e)}`")
+            await tmp_client.disconnect()
+            del GEN_DATA[user_id]
 
     # --- STEP 3: RECEIVE 2FA PASSWORD ---
     elif step == "password":
         tmp_client = state["client"]
         phone = state["phone"]
-        msg = await event.reply("⏳ Verifying Password...")
+        msg = await event.reply("⏳ Verifying 2FA Password...")
         
         try:
             await tmp_client.sign_in(password=text)
@@ -110,13 +129,17 @@ async def handle_gen_input(event):
             await save_user_session(user_id, string, phone)
             
             await msg.edit(
-                "🎯 **Session Generated & Linked (2FA Auth)!**\n\n"
-                f"🏷️ **Phone:** `{phone}`\n"
+                "🎯 **Session Successfully Linked (2FA)!**\n\n"
+                f"📱 **Phone:** `{phone}`\n"
                 f"🔑 **String:** `{string}`\n\n"
-                "Your account is now linked successfully.",
+                "You are all set! Open modules to deploy your bot.",
                 buttons=[[Button.inline("⚙️ Go to Modules", data="modules_main")]]
             )
             await tmp_client.disconnect()
             del GEN_DATA[user_id]
+        except FloodWaitError as f:
+            await msg.edit(f"❌ **Too many attempts!**\nTelegram has blocked login attempts for `{f.seconds}` seconds. Please wait and try again later.")
+            await tmp_client.disconnect()
+            del GEN_DATA[user_id]
         except Exception as e:
-            await msg.edit(f"❌ **Password Error:** `{str(e)}`")
+            await msg.edit(f"❌ **Password Error:** `{str(e)}` \nPlease try /start again.")
