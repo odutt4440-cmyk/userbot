@@ -12,6 +12,7 @@ def register(client):
         'first_name': None,
         'last_name': None,
         'about': None,
+        'photo_path': None, # Original photo store karne ke liye
         'has_backup': False
     }
 
@@ -24,7 +25,6 @@ def register(client):
             pass
 
     # --- 1. CLONE COMMAND (.clone) ---
-    # Usage: Reply to any user's message with .clone
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.clone$'))
     async def clone_handler(event):
         if not event.is_reply:
@@ -39,19 +39,26 @@ def register(client):
             target_user = await client.get_entity(reply_msg.sender_id)
             target_full = await client(GetFullUserRequest(target_user))
             
-            # --- BACKUP ORIGINAL IDENTITY ---
+            # --- BACKUP ORIGINAL IDENTITY (ONLY ONCE) ---
             if not client.cl_original['has_backup']:
                 me = await client.get_me()
                 me_full = await client(GetFullUserRequest(me))
                 client.cl_original['first_name'] = me.first_name
                 client.cl_original['last_name'] = me.last_name
                 client.cl_original['about'] = me_full.full_user.about
+                
+                # Backup Original Photo
+                photo_backup = f"original_{event.sender_id}.jpg"
+                my_photos = await client.get_profile_photos('me', limit=1)
+                if my_photos:
+                    await client.download_media(my_photos[0], file=photo_backup)
+                    client.cl_original['photo_path'] = photo_backup
+                
                 client.cl_original['has_backup'] = True
 
-            # --- CLONE PROFILE PHOTO ---
+            # --- CLONE TARGET'S PHOTO ---
             target_photos = await client.get_profile_photos(target_user, limit=1)
             if target_photos:
-                # Unique filename per user to prevent conflicts
                 photo_path = f"clone_{event.sender_id}.jpg"
                 await client.download_media(target_photos[0], file=photo_path)
                 uploaded_photo = await client.upload_file(photo_path)
@@ -74,7 +81,6 @@ def register(client):
             asyncio.create_task(ephemeral_msg(status))
 
     # --- 2. REVERT COMMAND (.revert) ---
-    # Usage: .revert (Sets your original profile back)
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.revert$'))
     async def revert_handler(event):
         if not client.cl_original['has_backup']:
@@ -85,13 +91,25 @@ def register(client):
         status = await event.edit("🔄 **Restoring:** Returning to original identity...")
 
         try:
+            # Restore Photo if it was backed up
+            if client.cl_original['photo_path'] and os.path.exists(client.cl_original['photo_path']):
+                uploaded_photo = await client.upload_file(client.cl_original['photo_path'])
+                await client(UploadProfilePhotoRequest(file=uploaded_photo))
+                # Photo wapas lag gayi, ab backup file delete kar sakte hain
+                os.remove(client.cl_original['photo_path'])
+                client.cl_original['photo_path'] = None
+
+            # Restore Name and Bio
             await client(UpdateProfileRequest(
                 first_name=client.cl_original['first_name'] or '',
                 last_name=client.cl_original['last_name'] or '',
                 about=client.cl_original['about'] or ''
             ))
 
-            await status.edit("✅ **Identity Restored:** You are back to normal.")
+            # Reset state for next time
+            client.cl_original['has_backup'] = False
+
+            await status.edit("✅ **Identity Restored:** You are back to normal with your original PFP.")
             asyncio.create_task(ephemeral_msg(status))
         except Exception as e:
             await status.edit(f"❌ **Failed:** `{str(e)}` ")
