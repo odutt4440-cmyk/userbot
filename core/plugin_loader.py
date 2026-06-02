@@ -12,6 +12,7 @@ async def load_all_modules(client):
         "modules.fun.clone",
         # --- Management Modules ---
         "modules.management.group_tools",
+        "modules.management.tagger",
         "modules.management.info_tools"
     ]
     
