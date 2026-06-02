@@ -20,6 +20,7 @@ async def is_private_only(event):
     return True
 
 # --- 1. MAIN MENU LOGIC ---
+# --- 1. MAIN MENU LOGIC (Auto-Fixing Version) ---
 async def send_start_menu(event, edit=False):
     global START_MEDIA
     welcome_text = (
@@ -37,25 +38,35 @@ async def send_start_menu(event, edit=False):
     ]
 
     try:
-        # DB se cached File ID uthao
-        if not START_MEDIA:
-            START_MEDIA = await get_setting("START_PIC_ID")
+        # DB se cache uthao
+        cached_id = await get_setting("START_PIC_ID")
+        
+        # 🔥 AUTO-CLEANUP: Agar DB me purana "Kachra" (lambi string) hai, toh use ignore karo
+        if cached_id and ("MessageMedia" in cached_id or "Photo(" in cached_id):
+            cached_id = None
 
         if edit:
             await event.edit(welcome_text, buttons=buttons)
         else:
-            # FIX: Agar START_MEDIA text hai, toh usey use karo, warna local path (START_PIC)
-            sent_msg = await bot.send_file(
-                event.chat_id, 
-                START_MEDIA if START_MEDIA else START_PIC, 
-                caption=welcome_text, 
-                buttons=buttons
-            )
-            # FIX: Pehli baar upload hone par sirf photo ki ID save karo (Text format me)
-            if not START_MEDIA and sent_msg.photo:
-                START_MEDIA = sent_msg.photo # Ye memory me object rakhega
-                # Database me sirf raw ID save karo jo dubara use ho sake
-                await set_setting("START_PIC_ID", str(sent_msg.photo.id))
+            try:
+                # Try sending with Cached ID (Fast)
+                sent_msg = await bot.send_file(
+                    event.chat_id, 
+                    cached_id if cached_id else START_PIC, 
+                    caption=welcome_text, 
+                    buttons=buttons
+                )
+                # Agar pehli baar hai ya ID galat thi, toh naya ID save karo
+                if not cached_id and sent_msg and sent_msg.photo:
+                    await set_setting("START_PIC_ID", str(sent_msg.photo.id))
+            except Exception:
+                # 🛡️ ULTIMATE FALLBACK: Agar ID fail ho jaye, toh local file se bhejo
+                await bot.send_file(
+                    event.chat_id, 
+                    START_PIC, 
+                    caption=welcome_text, 
+                    buttons=buttons
+                )
                 
     except Exception as e:
         print(f"Start Menu Error: {e}")
