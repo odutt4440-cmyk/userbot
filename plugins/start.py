@@ -134,7 +134,7 @@ async def games_menu(event):
         "**WordSeek Solver:** `.ws on` | `.ws loop on`\n"
         "**WordChain Pro:** `on1` | `autoplay on` | `spam random`\n"
         "**Octopus Engine:** `/game@OctopusEN_Bot` | `.octo delay 2.6 3.2`\n"
-        "**Wordly Master:** `.won` | `.woff` | `.wloop on`"
+        "**Wordly Master:** `.won` | `.woff` | `.wloop on`| `.wloop off`"
     )
     buttons = [
         [Button.inline("WordSeek", data="mod_wordseek"), Button.inline("WordChain", data="mod_wordchain")],
