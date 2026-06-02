@@ -205,6 +205,20 @@ async def list_all_sudos():
         async with db.execute('SELECT * FROM sudo_users') as cursor:
             return await cursor.fetchall()
 
+# --- database.py me ye function add karo ---
+
+async def is_staff(user_id):
+    """Check if user is either Admin or any Sudo"""
+    # config se ADMIN_ID check karo
+    if user_id == ADMIN_ID: 
+        return True
+    
+    # Check in sudo_users table
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT user_id FROM sudo_users WHERE user_id = ?', (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return True if row else False
+
 # --- PROXY OBJECTS FOR ADMIN ---
 class CollectionProxy:
     def __init__(self, table): self.table = table
