@@ -2,7 +2,7 @@ import os
 from bot_instance import bot 
 from telethon import events, Button
 from config import START_PIC, ADMIN_ID, LOG_GROUP
-from database import claim_trial, has_claimed_trial, get_setting, set_setting
+from database import claim_trial, has_claimed_trial, get_setting, set_setting, is_banned, get_ban_info, get_maintenance
 
 # Photo caching handle
 START_MEDIA = None
@@ -19,8 +19,26 @@ async def is_private_only(event):
         return False
     return True
 
+# --- HELPER: SECURITY & MAINTENANCE CHECK ---
+async def global_security_check(event):
+    user_id = event.sender_id
+    
+    # 1. Maintenance Check (Admin is exempt)
+    is_maint, maint_text = await get_maintenance()
+    if is_maint and user_id != ADMIN_ID:
+        await event.reply(f"🛠️ **Bot Under Maintenance**\n\n{maint_text}")
+        return False
+        
+    # 2. Ban Check
+    if await is_banned(user_id):
+        ban_info = await get_ban_info(user_id) # Returns (time, reason)
+        reason = ban_info[1] if ban_info else "No reason provided."
+        await event.reply(f"🚫 **Access Denied!**\n\nYou have been banned from using this bot.\n\n**Reason:** `{reason}`\n**Contact:** @YourUsername for appeal.")
+        return False
+        
+    return True
+
 # --- 1. MAIN MENU LOGIC ---
-# --- 1. MAIN MENU LOGIC (Auto-Fixing Version) ---
 async def send_start_menu(event, edit=False):
     global START_MEDIA
     welcome_text = (
@@ -77,6 +95,7 @@ async def send_start_menu(event, edit=False):
 @bot.on(events.NewMessage(pattern=r'(?i)^/start'))
 async def start_handler(event):
     if not await is_private_only(event): return
+    if not await global_security_check(event): return
     if LOG_GROUP:
         user = await event.get_sender()
         name = user.first_name if user.first_name else "User"
@@ -197,6 +216,7 @@ async def trial_handler(event):
 
 @bot.on(events.CallbackQuery)
 async def callback_handler(event):
+    if not await global_security_check(event): return
     data = event.data.decode("utf-8")
     if data == "start_back":
         await send_start_menu(event, edit=True)
