@@ -9,7 +9,7 @@ from telethon.tl.types import User
 from wordfreq import top_n_list, zipf_frequency
 
 # =========================================================
-# SHARED ENGINE (Loaded once for extreme speed)
+# SHARED ENGINE
 # =========================================================
 FOLDER = os.path.dirname(__file__)
 CUSTOM_DICT_FILE = os.path.join(FOLDER, "octopus_words.json")
@@ -43,10 +43,10 @@ def register(client):
     client.o_guess_idx = 0
     client.o_waiting = False
     client.o_last_msg_id = 0
+    client.o_my_name = None # Tera naam store karne ke liye
     
-    # Speed Config
-    client.o_min_delay = 0.5 # Fast mode default
-    client.o_max_delay = 1.0
+    client.o_min_delay = 3.1 
+    client.o_max_delay = 3.8
     client.o_retry_int = 4.0
 
     # --- HELPERS ---
@@ -66,23 +66,18 @@ def register(client):
         usable = [x.lower() for x in letters]
         for ch in pattern:
             if ch != "_": usable.append(ch)
-        
         usable_counter = Counter(usable)
         results = []
-
         for word in all_words:
             if len(word) != len(pattern): continue
             if not all(p == "_" or p == w for p, w in zip(pattern, word)): continue
             wc = Counter(word)
             if any(wc[ch] > usable_counter[ch] for ch in wc): continue
-            
-            # Scoring Logic
             score = learned_words.get(word, 0) * 10000
             score += int(zipf_frequency(word, "en") * 100)
             score += sum(word.count(c) for c in "etaoinshrdlu")
             score += 20 - len(word)
             results.append((word, score))
-        
         results.sort(key=lambda x: x[1], reverse=True)
         return [x[0] for x in results[:5]]
 
@@ -91,7 +86,6 @@ def register(client):
         for row in event.buttons:
             for btn in row:
                 if any(k.lower() in btn.text.lower() for k in keywords):
-                    # Fast click for setup
                     await event.click(text=btn.text)
                     return True
         return False
@@ -100,9 +94,7 @@ def register(client):
         client.o_waiting = True
         while client.o_waiting and client.o_running:
             await asyncio.sleep(client.o_retry_int)
-            # Check if round changed during sleep
             if not client.o_waiting: break
-
             if client.o_guess_idx < len(client.o_answers):
                 answer = client.o_answers[client.o_guess_idx]
                 client.o_guess_idx += 1
@@ -110,7 +102,6 @@ def register(client):
                     await asyncio.sleep(0.2)
                 await client.send_message(client.o_chat, answer)
             else:
-                # No more guesses, try to skip
                 await click_button_fast(event, ["skip", "♻", "pass", "Next"])
                 client.o_waiting = False
 
@@ -122,6 +113,11 @@ def register(client):
     async def octopus_cmds(event):
         text = event.raw_text.strip()
         if text == "/game@OctopusEN_Bot":
+            # Store owner name to verify setup messages later
+            if not client.o_my_name:
+                me = await client.get_me()
+                client.o_my_name = me.first_name
+
             client.o_chat = event.chat_id
             client.o_running = True
             await client.send_message("me", f"🐙 **Octopus Active in:** `{event.chat_id}`")
@@ -137,8 +133,10 @@ def register(client):
         if not client.o_running or event.chat_id != client.o_chat: return
         
         sender = await event.get_sender()
-        if not sender or getattr(sender, "username", "").lower() != "octopusen_bot":
-            # If someone else (user/bot) types a word, stop retrying this round
+        if not sender: return
+        s_username = getattr(sender, "username", "") or ""
+        
+        if s_username.lower() != "octopusen_bot":
             if len(event.raw_text) > 1 and not event.raw_text.startswith('/'):
                 client.o_waiting = False
             return
@@ -146,11 +144,17 @@ def register(client):
         text = event.raw_text
         low = text.lower()
 
-        # 🔥 CRITICAL: Immediately stop old round logic if bot sends result or new round
+        # 🔥 Reset if round ends or someone else wins
         if any(x in low for x in ["got it right", "correct answer", "round:", "letters:", "passed the word"]):
             client.o_waiting = False
 
-        # 1. Setup Menu Handling (Turbo Speed)
+        # 🔥 NEW: OWNER VERIFICATION FOR SETUP
+        # Octopus bot setup messages usually include the name: "📍 Name, how many rounds..."
+        if any(x in low for x in ["choose a game type", "how many rounds", "difficulty"]):
+            if client.o_my_name and client.o_my_name not in text:
+                return # Not our game, don't click anything
+
+        # 1. Setup Menu Handling
         if "choose a game type" in low:
             await click_button_fast(event, ["gap", "🔠"])
             return
@@ -162,15 +166,12 @@ def register(client):
             return
 
         # 2. Board Detection
-        # Regex update to capture '🧩 P _ r _' format correctly
         pattern_match = re.search(r"(?:🧩|Q:)\s*([A-Za-z](?:\s*[A-Za-z_])+)", text)
         if pattern_match and "_" in pattern_match.group(1):
             if event.id == client.o_last_msg_id: return
             client.o_last_msg_id = event.id
             
             pattern = pattern_match.group(1).strip()
-            
-            # Letters extraction
             letters_match = re.search(r"(?:letters:|letter:)\s*(.+)", text, re.I)
             letters = letters_match.group(1) if letters_match else " ".join(re.findall(r"\b[A-Za-z]\b", text))
 
@@ -181,15 +182,11 @@ def register(client):
             if ans:
                 word = client.o_answers[client.o_guess_idx]
                 client.o_guess_idx += 1
-                # First Guess Delay
-                async with client.action(client.o_chat, "typing"):
+                async with client.action(client.o_chat, 'typing'):
                     await asyncio.sleep(random.uniform(client.o_min_delay, client.o_max_delay))
                 await client.send_message(client.o_chat, word)
-                
-                # Start background retry loop
                 asyncio.create_task(retry_loop(event))
             else:
-                # No word found in dictionary, click skip instantly
                 await click_button_fast(event, ["skip", "♻", "pass", "Next"])
             return
 
@@ -198,5 +195,6 @@ def register(client):
             m = re.search(r"(?:→|⟶|answer:)\s*([A-Za-z]+)", text, re.I)
             if m: save_learned_word(m.group(1))
 
-        if "game ended" in low:
+        # 🔥 NEW: Clear running state if bot says a game is already active or game ends
+        if "already active games" in low or "game ended" in low:
             client.o_running = False
