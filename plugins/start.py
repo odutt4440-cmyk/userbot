@@ -113,10 +113,12 @@ async def modules_cmd(event):
     if not await is_private_only(event): return
     await modules_main(event, edit=False)
 
-# --- 3. CATEGORY HANDLERS (Update this part) ---
+
+
+# --- 3. CATEGORY HANDLERS ---
 
 async def modules_main_logic(event, edit=False):
-    """Universal logic for modules menu"""
+    """Universal logic for modules menu to prevent NameError/Crash"""
     text = "📂 **Select a Category:**\n\nChoose the type of automation you want to deploy."
     buttons = [
         [Button.inline("🛡️ Management", data="management_ub"), Button.inline("🥳 Fun Tools", data="fun_ub")],
@@ -131,7 +133,7 @@ async def modules_main_logic(event, edit=False):
             pass
     return await event.respond(text, buttons=buttons)
 
-# Button Click Handler
+# Button Handler
 @bot.on(events.CallbackQuery(data="modules_main"))
 async def modules_callback(event):
     if not await global_security_check(event): return
@@ -142,6 +144,7 @@ async def modules_callback(event):
 async def modules_cmd(event):
     if not await is_private_only(event): return
     if not await global_security_check(event): return
+    # FIX: function name should be modules_main_logic
     await modules_main_logic(event, edit=False)
 
 # --- 4. MANAGEMENT TOOLS MENU ---
