@@ -198,16 +198,22 @@ def register(client):
                 word = client.o_answers[client.o_guess_idx]
                 client.o_guess_idx += 1
                 async with client.action(client.o_chat, 'typing'):
-                    # Safe Dynamic Delay
                     await asyncio.sleep(random.uniform(client.o_min_delay, client.o_max_delay))
                 await client.send_message(client.o_chat, word)
                 asyncio.create_task(retry_loop(event, event.id))
             else:
-                # --- BETTER AUTO SKIP ---
-                # No valid word found in 120k dictionary, click skip button
-                await click_turbo(event, ["skip", "♻", "pass", "Next"])
+                # --- ULTIMATE AUTO SKIP FIX ---
+                print("DEBUG: No word found, attempting force skip...")
+                # 1. Try clicking instantly
+                done = await click_turbo(event, ["skip", "♻", "pass", "Next"])
+                
+                # 2. If failed, wait 1 sec, refresh message and try again
+                if not done:
+                    await asyncio.sleep(1.2)
+                    event = await client.get_messages(event.chat_id, ids=event.id)
+                    await click_turbo(event, ["skip", "♻", "pass", "Next"])
             return
-
+            
         # 4. Learning Logic
         if any(x in low for x in ["correct answer", "passed the word", "got it right"]):
             m = re.search(r"(?:→|⟶|answer:)\s*([A-Za-z]+)", text, re.I)
