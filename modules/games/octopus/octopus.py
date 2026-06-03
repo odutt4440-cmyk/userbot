@@ -10,12 +10,11 @@ from telethon.tl.types import User
 from wordfreq import top_n_list, zipf_frequency
 
 # =========================================================
-# SHARED ENGINE (Global Memory)
+# SHARED ENGINE
 # =========================================================
 FOLDER = os.path.dirname(__file__)
 CUSTOM_DICT_FILE = os.path.join(FOLDER, "octopus_words.json")
 
-print("🐙 Octopus Engine: Loading Dictionary & Memory...")
 english_words = top_n_list("en", 120000)
 all_words = set()
 for w in english_words:
@@ -43,13 +42,12 @@ def register(client):
     client.o_waiting = False    
     client.o_last_msg_id = 0
     
-    # Speed Config
-    client.o_min_delay = 3.1 
-    client.o_max_delay = 3.6
+    # Dynamic Speed Config (Bot will self-adjust)
+    client.o_min_delay = 3.3 
+    client.o_max_delay = 3.8
     client.o_retry_int = 4.5
     client.o_max_guesses = 5
 
-    # --- HELPERS ---
     def save_learned_word(word):
         word = word.lower().strip()
         if not word.isalpha() or len(word) <= 1: return
@@ -84,8 +82,12 @@ def register(client):
         return [x[0] for x in results[:client.o_max_guesses]]
 
     async def click_turbo(event, keywords):
-        """Finds and clicks button instantly."""
-        if not event.buttons: return False
+        """Force clicks any matching button instantly."""
+        if not event.buttons:
+            # Refresh message to get latest buttons
+            event = await client.get_messages(event.chat_id, ids=event.id)
+            if not event.buttons: return False
+            
         for row in event.buttons:
             for btn in row:
                 if any(k.lower() in btn.text.lower() for k in keywords):
@@ -106,6 +108,7 @@ def register(client):
                 await client.send_message(client.o_chat, answer)
             else:
                 client.o_waiting = False
+                # Final attempt to skip before giving up
                 await click_turbo(event, ["skip", "♻", "pass", "Next"])
                 break
 
@@ -113,31 +116,27 @@ def register(client):
     @client.on(events.NewMessage(chats='me', outgoing=True))
     async def control_panel(event):
         text = event.raw_text.lower().strip()
-        
         if text == ".octo on":
             client.o_running = True
             client.o_chat = None
-            await event.edit("🚀 **Octopus Engine: ARMED**\nTargeting next `/game` command.")
-            
+            await event.edit("🚀 **Octopus Engine: ARMED**\nAuto-adjusting speed enabled.")
         elif text == ".octo off":
             client.o_running = False
             await event.edit("🛑 **Octopus Engine: DISARMED**")
-            
         elif text.startswith(".octo delay"):
             try:
                 parts = text.split()
                 client.o_min_delay = float(parts[2])
-                client.o_max_delay = float(parts[3])
-                await event.edit(f"⚡ **Octo Delay Set:** {client.o_min_delay}s - {client.o_max_delay}s")
-            except:
-                await event.edit("Format: `.octo delay 2.0 3.0`")
+                client.o_max_delay = client.o_min_delay + 0.5
+                await event.edit(f"⚡ **Manual Delay Set:** {client.o_min_delay}s")
+            except: pass
 
     # --- TARGET LOCK ---
     @client.on(events.NewMessage(outgoing=True))
     async def detect_target(event):
         if client.o_running and "/game" in event.raw_text:
             client.o_chat = event.chat_id
-            await client.send_message("me", f"🎯 **Target Locked:** `{event.chat_id}`")
+            await client.send_message("me", f"🎯 **Locked Target:** `{event.chat_id}`")
 
     # --- MAIN ENGINE ---
     @client.on(events.NewMessage)
@@ -150,6 +149,19 @@ def register(client):
         if not sender: return
         s_user = (getattr(sender, "username", "") or "").lower()
         
+        # 1. HANDLE DYNAMIC SPEED WARNINGS (The Fix)
+        # Screenshot logic: "Minimum time is 3.27 seconds"
+        if "minimum time is" in event.raw_text.lower() or "too fast" in event.raw_text.lower():
+            time_match = re.search(r"(\d+\.\d+)", event.raw_text)
+            if time_match:
+                new_min = float(time_match.group(1)) + 0.15 # Add safety buffer
+                client.o_min_delay = new_min
+                client.o_max_delay = new_min + 0.5
+                client.o_retry_int = new_min + 1.0
+                await client.send_message("me", f"⚠️ **Speed Adjusted:** Bot requested {time_match.group(1)}s. Set to {new_min}s.")
+                client.o_waiting = False # Reset turn on warning
+            return
+
         if s_user != "octopusen_bot":
             if not event.out and len(event.raw_text or "") > 1: client.o_waiting = False
             return
@@ -186,15 +198,17 @@ def register(client):
                 word = client.o_answers[client.o_guess_idx]
                 client.o_guess_idx += 1
                 async with client.action(client.o_chat, 'typing'):
+                    # Safe Dynamic Delay
                     await asyncio.sleep(random.uniform(client.o_min_delay, client.o_max_delay))
                 await client.send_message(client.o_chat, word)
                 asyncio.create_task(retry_loop(event, event.id))
             else:
-                # --- AUTO SKIP IF NO WORD FOUND ---
+                # --- BETTER AUTO SKIP ---
+                # No valid word found in 120k dictionary, click skip button
                 await click_turbo(event, ["skip", "♻", "pass", "Next"])
             return
 
-        # Learning Logic
+        # 4. Learning Logic
         if any(x in low for x in ["correct answer", "passed the word", "got it right"]):
             m = re.search(r"(?:→|⟶|answer:)\s*([A-Za-z]+)", text, re.I)
             if m: save_learned_word(m.group(1))
