@@ -8,36 +8,47 @@ from config import ADMIN_ID
 log = logging.getLogger(__name__)
 DB_FILE = "community.db"
 
-# --- DB INITIALIZATION ---
+# --- DB INITIALIZATION (Replace this function) ---
 async def init_db():
     async with aiosqlite.connect(DB_FILE) as db:
-        # Users Table - Added 'phone' column
+        # Core Tables
         await db.execute('''CREATE TABLE IF NOT EXISTS users 
             (user_id INTEGER PRIMARY KEY, session TEXT, phone TEXT, last_login TEXT)''')
-        
         await db.execute('''CREATE TABLE IF NOT EXISTS subscriptions 
             (user_id INTEGER PRIMARY KEY, status TEXT, expiry_date TEXT)''')
-        
         await db.execute('''CREATE TABLE IF NOT EXISTS game_state 
             (user_id INTEGER, game_name TEXT, data TEXT, PRIMARY KEY (user_id, game_name))''')
         
+        # Banned table with reason support
         await db.execute('''CREATE TABLE IF NOT EXISTS banned 
             (user_id INTEGER PRIMARY KEY, banned_at TEXT, reason TEXT)''')
 
         await db.execute('''CREATE TABLE IF NOT EXISTS trials 
             (user_id INTEGER PRIMARY KEY, claimed_at TEXT)''')
-            
         await db.execute('''CREATE TABLE IF NOT EXISTS settings 
             (key TEXT PRIMARY KEY, value TEXT)''')
-
         await db.execute('''CREATE TABLE IF NOT EXISTS warnings 
             (user_id INTEGER, chat_id INTEGER, count INTEGER, PRIMARY KEY (user_id, chat_id))''')
         await db.execute('''CREATE TABLE IF NOT EXISTS sudo_users 
             (user_id INTEGER PRIMARY KEY, can_ban INTEGER, can_pay INTEGER)''')
-        
-        await db.commit()
-    log.info("✅ SQLite Engine: Database ready with Phone support.")
 
+        # --- CAMPAIGN TABLES (Adding now for the new tool) ---
+        await db.execute('''CREATE TABLE IF NOT EXISTS campaign_accounts 
+            (user_id INTEGER, phone TEXT, session TEXT, PRIMARY KEY (user_id, phone))''')
+        await db.execute('''CREATE TABLE IF NOT EXISTS campaign_config 
+            (user_id INTEGER PRIMARY KEY, target TEXT, messages TEXT, 
+             delay_min INTEGER, delay_max INTEGER, delete_after INTEGER, is_running INTEGER)''')
+
+        # 🔥 AUTO-MIGRATION FIX: Adding 'reason' column if it doesn't exist
+        try:
+            await db.execute('SELECT reason FROM banned LIMIT 1')
+        except aiosqlite.OperationalError:
+            await db.execute('ALTER TABLE banned ADD COLUMN reason TEXT DEFAULT "No reason provided"')
+            log.info("Migration: Added missing 'reason' column to banned table.")
+
+        await db.commit()
+    log.info("✅ SQLite Engine: All tables and columns verified.")
+    
 # --- SETTINGS FUNCTIONS ---
 async def get_setting(key):
     async with aiosqlite.connect(DB_FILE) as db:
@@ -237,6 +248,47 @@ async def get_maintenance():
     mode = await get_setting("MAINTENANCE_MODE")
     text = await get_setting("MAINTENANCE_TEXT")
     return (mode == "on", text or "Bot is under maintenance.")
+
+# --- CAMPAIGN BOT FUNCTIONS ---
+
+async def add_campaign_account(user_id, phone, session):
+    """User ke multiple accounts save karne ke liye"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute('INSERT OR REPLACE INTO campaign_accounts VALUES (?, ?, ?)', (user_id, phone, session))
+        await db.commit()
+
+async def get_campaign_accounts(user_id):
+    """Bande ne kitne extra accounts add kiye hain list nikalne ke liye"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT phone, session FROM campaign_accounts WHERE user_id = ?', (user_id,)) as cursor:
+            return await cursor.fetchall()
+
+async def remove_campaign_account(user_id, phone):
+    """Specific account delete karne ke liye"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute('DELETE FROM campaign_accounts WHERE user_id = ? AND phone = ?', (user_id, phone))
+        await db.commit()
+
+async def save_campaign_config(user_id, target, messages, d_min=5, d_max=15, d_del=5):
+    """Campaign ki settings (group, msgs, delay) save karne ke liye"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        msg_str = json.dumps(messages) # List ko string me convert kiya
+        await db.execute('''INSERT OR REPLACE INTO campaign_config 
+            VALUES (?, ?, ?, ?, ?, ?, ?)''', (user_id, target, msg_str, d_min, d_max, d_del, 0))
+        await db.commit()
+
+async def get_campaign_config(user_id):
+    """Campaign settings fetch karne ke liye"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT * FROM campaign_config WHERE user_id = ?', (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {
+                    "target": row[1], "messages": json.loads(row[2]),
+                    "delay_min": row[3], "delay_max": row[4],
+                    "delete_after": row[5], "is_running": row[6]
+                }
+            return None
 
 
 # --- PROXY OBJECTS FOR ADMIN ---
