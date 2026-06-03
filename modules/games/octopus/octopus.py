@@ -35,6 +35,7 @@ if os.path.exists(CUSTOM_DICT_FILE):
 # THE MODULE REGISTER
 # =========================================================
 def register(client):
+    # --- State ---
     client.o_chat = None
     client.o_running = False
     client.o_answers = []
@@ -44,10 +45,10 @@ def register(client):
     client.o_start_msg_id = 0
     client.o_my_name = None
     
-    # Timing (Adjusted for Turbo Start + Safe Answers)
-    client.o_min_delay = 3.1 
-    client.o_max_delay = 3.5
-    client.o_retry_int = 4.0
+    # Speed Config (Turbo Standard)
+    client.o_min_delay = 2.2 
+    client.o_max_delay = 2.8
+    client.o_retry_int = 3.8
 
     def solve_puzzle(pattern_line, letters_line):
         pattern = re.sub(r"[^A-Za-z_]", "", pattern_line).lower()
@@ -56,6 +57,7 @@ def register(client):
         for ch in pattern:
             if ch != "_": usable.append(ch)
         usable_counter = Counter(usable)
+        
         results = []
         for word in all_words:
             if len(word) != len(pattern): continue
@@ -64,26 +66,28 @@ def register(client):
             if any(wc[ch] > usable_counter[ch] for ch in wc): continue
             score = learned_words.get(word, 0) * 10000 + int(zipf_frequency(word, "en") * 100) + sum(word.count(c) for c in "etaoinshrdlu")
             results.append((word, score))
+        
         results.sort(key=lambda x: x[1], reverse=True)
         return [x[0] for x in results[:5]]
 
     async def click_turbo(event, target_text):
-        """Finds and clicks a button instantly."""
         if not event.buttons: return False
         for row in event.buttons:
             for btn in row:
                 if target_text.lower() in btn.text.lower():
                     try: 
-                        await event.click(text=btn.text)
+                        await event.click()
                         return True
                     except: return False
         return False
 
-    async def retry_loop(event):
+    async def retry_loop(event, msg_id):
         client.o_waiting = True
         while client.o_waiting and client.o_running:
             await asyncio.sleep(client.o_retry_int)
-            if not client.o_waiting: break
+            # Stop if a new round/message has arrived
+            if not client.o_waiting or client.o_last_msg_id != msg_id: break
+
             if client.o_guess_idx < len(client.o_answers):
                 answer = client.o_answers[client.o_guess_idx]
                 client.o_guess_idx += 1
@@ -101,9 +105,10 @@ def register(client):
             if not client.o_my_name:
                 me = await client.get_me()
                 client.o_my_name = me.first_name
-            await client.send_message("me", "🐙 **Turbo Octopus Engine Started!**")
+            await client.send_message("me", "🐙 **Turbo Octopus Activated.**")
 
     @client.on(events.NewMessage)
+    @client.on(events.MessageEdited) # FIX: Detect when bot edits for new round
     async def octopus_engine(event):
         if not client.o_running or event.chat_id != client.o_chat: return
         
@@ -112,40 +117,38 @@ def register(client):
         s_user = (getattr(sender, "username", "") or "").lower()
         
         if s_user != "octopusen_bot":
-            if not event.out and len(event.raw_text) > 1: client.o_waiting = False
+            if not event.out and len(event.raw_text or "") > 1: client.o_waiting = False
             return
 
-        text = event.raw_text
+        text = event.raw_text or ""
         low = text.lower()
 
-        # Instant round reset
+        # Instant round reset detection
         if any(x in low for x in ["got it right", "correct answer", "round:", "letters:", "passed"]):
             client.o_waiting = False
 
-        # --- TURBO SETUP (Reply-tracking + Keyword) ---
+        # --- SETUP ---
         if "choose a game type" in low and event.reply_to_msg_id == client.o_start_msg_id:
-            await click_turbo(event, "Gap-filling") # Only Gap-filling
+            await click_turbo(event, "Gap-filling")
             return
-
-        if "how many rounds" in low and client.o_my_name in text:
+        if "how many rounds" in low and (not client.o_my_name or client.o_my_name in text):
             await click_turbo(event, "50")
             return
-
-        if "difficulty" in low and client.o_my_name in text:
+        if "difficulty" in low and (not client.o_my_name or client.o_my_name in text):
             await click_turbo(event, "hard")
             return
 
-        # --- PUZZLE SOLVER ---
-        # Capture 'Q: S _ _ _ _' or '🧩 S _ _ _ _'
+        # --- SOLVER ---
+        # Advanced Regex to catch board even after edits
         pattern_match = re.search(r"(?:🧩|Q:)\s*([A-Za-z](?:\s*[A-Za-z_])+)", text)
         if pattern_match and "_" in pattern_match.group(1):
-            if event.id == client.o_last_msg_id: return
+            # Check if we already solved this exact message state
+            if event.id == client.o_last_msg_id and "Round:" not in text: return
             client.o_last_msg_id = event.id
             
             pattern = pattern_match.group(1).strip()
-            # Extract letters line
-            letters_match = re.search(r"(?:letters:|letter:)\s*(.+)", text, re.I)
-            letters = letters_match.group(1) if letters_match else " ".join(re.findall(r"\b[A-Z]\b", text))
+            letters_match = re.search(r"(?:letters:|letter:|🔠)\s*(.+)", text, re.I)
+            letters = letters_match.group(1) if letters_match else " ".join(re.findall(r"\b[A-Za-z]\b", text))
 
             ans = solve_puzzle(pattern, letters)
             client.o_answers = ans
@@ -154,11 +157,10 @@ def register(client):
             if ans:
                 word = client.o_answers[client.o_guess_idx]
                 client.o_guess_idx += 1
-                # Final Speed Adjustment: Wait for bot to be ready
                 async with client.action(client.o_chat, 'typing'):
                     await asyncio.sleep(random.uniform(client.o_min_delay, client.o_max_delay))
                 await client.send_message(client.o_chat, word)
-                asyncio.create_task(retry_loop(event))
+                asyncio.create_task(retry_loop(event, event.id))
             else:
                 await click_turbo(event, "skip")
             return
