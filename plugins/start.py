@@ -113,17 +113,36 @@ async def modules_cmd(event):
     if not await is_private_only(event): return
     await modules_main(event, edit=False)
 
-# --- 3. CATEGORY HANDLERS ---
-@bot.on(events.CallbackQuery(data="modules_main"))
-async def modules_main(event, edit=True):
+# --- 3. CATEGORY HANDLERS (Update this part) ---
+
+async def modules_main_logic(event, edit=False):
+    """Universal logic for modules menu"""
     text = "📂 **Select a Category:**\n\nChoose the type of automation you want to deploy."
     buttons = [
         [Button.inline("🛡️ Management", data="management_ub"), Button.inline("🥳 Fun Tools", data="fun_ub")],
         [Button.inline("🎮 Game Bots", data="games_ub")],
         [Button.inline("🔙 Back to Menu", data="start_back")]
     ]
-    if edit: await event.edit(text, buttons=buttons)
-    else: await event.respond(text, buttons=buttons)
+    
+    if edit:
+        try:
+            return await event.edit(text, buttons=buttons)
+        except:
+            pass
+    return await event.respond(text, buttons=buttons)
+
+# Button Click Handler
+@bot.on(events.CallbackQuery(data="modules_main"))
+async def modules_callback(event):
+    if not await global_security_check(event): return
+    await modules_main_logic(event, edit=True)
+
+# Command Handler (/modules)
+@bot.on(events.NewMessage(pattern=r'(?i)^/modules'))
+async def modules_cmd(event):
+    if not await is_private_only(event): return
+    if not await global_security_check(event): return
+    await modules_main_logic(event, edit=False)
 
 # --- 4. MANAGEMENT TOOLS MENU ---
 @bot.on(events.CallbackQuery(data="management_ub"))
@@ -214,12 +233,17 @@ async def trial_handler(event):
     else:
         await event.answer(f"❌ Error: {result}", alert=True)
 
+# --- callback_handler update karo ---
 @bot.on(events.CallbackQuery)
 async def callback_handler(event):
     if not await global_security_check(event): return
     data = event.data.decode("utf-8")
+    
     if data == "start_back":
         await send_start_menu(event, edit=True)
+    
+    # modules_main yahan se hata diya gaya hai kyunki uska apna @bot.on upar hai
+    
     elif data == "rules":
         await event.answer("1. One trial per user.\n2. No spamming commands.\n3. Respect community", alert=True)
     elif data == "dev_info":
