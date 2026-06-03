@@ -188,7 +188,7 @@ async def games_menu(event):
     # Professional list of ALL available commands inside the files
     text = (
         "🎮 **Userbot Game Modules**\n\n"
-        "Deploy high-speed solvers. Use these commands in any chat once active:\n\n"
+        "Deploy high-speed solvers. Use these commands in saved message once active:\n\n"
         "🧩 **WordSeek Solver:**\n"
         "• `.ws on` | `.ws off` — Toggle Solver\n"
         "• `.ws loop on` | `.ws loop off` — Auto Restart\n"
@@ -199,7 +199,9 @@ async def games_menu(event):
         "• `.wdelay 0.5` — Set Typing Delay\n"
         "• `.wstatus` — Check Round Stats\n\n"
         "🐙 **Octopus Engine:**\n"
-        "• `/game@OctopusEN_Bot` — Lock & Solve\n"
+        "• `.octo on`- before starting game command\n"
+        "• after starting choose rounds and mode\n"
+        "• `.octo off`- it will stop the bot\n"
         "• `.octo delay 2.6 3.2` — Adjust Timing\n\n"
         "⛓️ **WordChain Pro:**\n"
         "• `on1`, `on2`... — Join specific game ID\n"
