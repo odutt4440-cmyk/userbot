@@ -15,7 +15,7 @@ from wordfreq import top_n_list, zipf_frequency
 FOLDER = os.path.dirname(__file__)
 CUSTOM_DICT_FILE = os.path.join(FOLDER, "octopus_words.json")
 
-print("🐙 Octopus Engine: Loading Dictionary...")
+print("🐙 Octopus Engine: Initializing Emoji-Proof Core...")
 english_words = top_n_list("en", 120000)
 all_words = set()
 for w in english_words:
@@ -43,10 +43,10 @@ def register(client):
     client.o_waiting = False    
     client.o_last_msg_id = 0
     
-    # Timing Config
     client.o_min_delay = 3.1 
     client.o_max_delay = 3.6
     client.o_retry_int = 4.5
+    client.o_max_guesses = 5
 
     def save_learned_word(word):
         word = word.lower().strip()
@@ -79,7 +79,7 @@ def register(client):
             results.append((word, score))
         
         results.sort(key=lambda x: x[1], reverse=True)
-        return [x[0] for x in results[:5]]
+        return [x[0] for x in results[:client.o_max_guesses]]
 
     async def retry_loop(event, msg_id):
         client.o_waiting = True
@@ -100,27 +100,23 @@ def register(client):
                                 except: pass
                 break
 
-    # --- CONTROL PANEL (Saved Messages) ---
     @client.on(events.NewMessage(chats='me', outgoing=True))
     async def control_panel(event):
         text = event.raw_text.lower().strip()
         if text == ".octo on":
             client.o_running = True
             client.o_chat = None
-            await event.edit("🚀 **Octopus Engine: ARMED**\nTargeting next `/game` command.")
+            await event.edit("🚀 **Octopus Engine: ARMED**\nEmoji-Proof mode active.")
         elif text == ".octo off":
             client.o_running = False
             await event.edit("🛑 **Octopus Engine: DISARMED**")
 
-    # --- TARGET LOCK ---
     @client.on(events.NewMessage(outgoing=True))
     async def detect_target(event):
-        if client.o_running:
-            if "/game" in event.raw_text:
-                client.o_chat = event.chat_id
-                await client.send_message("me", f"🎯 **Octopus Target Locked:** `{event.chat_id}`")
+        if client.o_running and "/game" in event.raw_text:
+            client.o_chat = event.chat_id
+            await client.send_message("me", f"🎯 **Target Locked:** `{event.chat_id}`")
 
-    # --- MAIN ENGINE ---
     @client.on(events.NewMessage)
     @client.on(events.MessageEdited) 
     async def main_engine(event):
@@ -131,7 +127,6 @@ def register(client):
         if not sender: return
         s_user = (getattr(sender, "username", "") or "").lower()
         
-        # Reset retry if someone else answers
         if s_user != "octopusen_bot":
             if not event.out and len(event.raw_text or "") > 1: client.o_waiting = False
             return
@@ -139,23 +134,34 @@ def register(client):
         text = event.raw_text or ""
         low = text.lower()
 
-        if any(x in low for x in ["got it right", "correct", "round:", "letters:", "passed"]):
+        if any(x in low for x in ["got it right", "correct", "round:", "passed"]):
             client.o_waiting = False
 
-        # 🔥 UNIVERSAL BOARD DETECTION (🎯, 🧩, Q:, Round:)
-        # Looking for a line that has letters and underscores
-        pattern_match = re.search(r"([A-Za-z](?:\s+[A-Za-z_])+)", text)
-        if pattern_match and "_" in pattern_match.group(1):
+        # --- EMOJI-PROOF DETECTION LOGIC ---
+        pattern_line = None
+        letters_line = None
+
+        lines = text.splitlines()
+        for line in lines:
+            # 1. Detect Board (Line with underscores and letters)
+            clean_l = re.sub(r"[^A-Za-z_ ]", "", line).strip()
+            if "_" in clean_l and len(clean_l.replace(" ", "")) > 1:
+                pattern_line = line
+            
+            # 2. Detect Letters Pool (Line with 'letter:' and characters)
+            if "letter" in line.lower() and ":" in line:
+                letters_line = line.split(":", 1)[1]
+
+        if pattern_line:
+            # Sync Check
             if event.id == client.o_last_msg_id and "Round:" not in text: return
             client.o_last_msg_id = event.id
             
-            pattern = pattern_match.group(1).strip()
-            
-            # 🔥 UNIVERSAL LETTERS DETECTION (📝, 🔠, letters:)
-            letters_match = re.search(r"(?:letters:|letter:|🔠|📝)\s*(.+)", text, re.I)
-            letters = letters_match.group(1) if letters_match else " ".join(re.findall(r"\b[A-Za-z]\b", text))
+            # If letters not found by word, fallback to regex search
+            if not letters_line:
+                letters_line = " ".join(re.findall(r"\b[A-Za-z]\b", text))
 
-            ans = solve_puzzle(pattern, letters)
+            ans = solve_puzzle(pattern_line, letters_line)
             client.o_answers = ans
             client.o_guess_idx = 0
 
@@ -167,13 +173,9 @@ def register(client):
                 await client.send_message(client.o_chat, word)
                 asyncio.create_task(retry_loop(event, event.id))
             else:
-                # Automatic skip if no solution
                 if event.buttons:
-                    for row in event.buttons:
-                        for btn in row:
-                            if any(x in btn.text.lower() for x in ["skip", "♻", "pass"]):
-                                try: await event.click(); break
-                                except: pass
+                    try: await event.click(0) # Emergency click first button (skip)
+                    except: pass
             return
 
         if "game ended" in low: client.o_chat = None
