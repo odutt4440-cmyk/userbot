@@ -15,7 +15,6 @@ from wordfreq import top_n_list, zipf_frequency
 FOLDER = os.path.dirname(__file__)
 CUSTOM_DICT_FILE = os.path.join(FOLDER, "octopus_words.json")
 
-print("🐙 Octopus Engine: Loading Dictionary...")
 english_words = top_n_list("en", 120000)
 all_words = set()
 for w in english_words:
@@ -36,30 +35,19 @@ if os.path.exists(CUSTOM_DICT_FILE):
 # THE MODULE REGISTER
 # =========================================================
 def register(client):
-    # --- State ---
     client.o_chat = None
     client.o_running = False
     client.o_answers = []
     client.o_guess_idx = 0
     client.o_waiting = False
     client.o_last_msg_id = 0
-    client.o_start_msg_id = 0 
+    client.o_start_msg_id = 0
+    client.o_my_name = None
     
-    # Original Stable Delays (Thinking Warning protection)
+    # Timing (Adjusted for Turbo Start + Safe Answers)
     client.o_min_delay = 3.1 
-    client.o_max_delay = 3.6
-    client.o_retry_int = 4.3
-
-    # --- HELPERS ---
-    def save_learned_word(word):
-        word = word.lower().strip()
-        if not word.isalpha() or len(word) <= 1: return
-        learned_words[word] = learned_words.get(word, 0) + 1
-        all_words.add(word)
-        try:
-            with open(CUSTOM_DICT_FILE, "w") as f:
-                json.dump(learned_words, f, indent=2)
-        except: pass
+    client.o_max_delay = 3.5
+    client.o_retry_int = 4.0
 
     def solve_puzzle(pattern_line, letters_line):
         pattern = re.sub(r"[^A-Za-z_]", "", pattern_line).lower()
@@ -74,13 +62,22 @@ def register(client):
             if not all(p == "_" or p == w for p, w in zip(pattern, word)): continue
             wc = Counter(word)
             if any(wc[ch] > usable_counter[ch] for ch in wc): continue
-            score = learned_words.get(word, 0) * 10000
-            score += int(zipf_frequency(word, "en") * 100)
-            score += sum(word.count(c) for c in "etaoinshrdlu")
-            score += 20 - len(word)
+            score = learned_words.get(word, 0) * 10000 + int(zipf_frequency(word, "en") * 100) + sum(word.count(c) for c in "etaoinshrdlu")
             results.append((word, score))
         results.sort(key=lambda x: x[1], reverse=True)
         return [x[0] for x in results[:5]]
+
+    async def click_turbo(event, target_text):
+        """Finds and clicks a button instantly."""
+        if not event.buttons: return False
+        for row in event.buttons:
+            for btn in row:
+                if target_text.lower() in btn.text.lower():
+                    try: 
+                        await event.click(text=btn.text)
+                        return True
+                    except: return False
+        return False
 
     async def retry_loop(event):
         client.o_waiting = True
@@ -93,21 +90,18 @@ def register(client):
                 await client.send_message(client.o_chat, answer)
             else:
                 client.o_waiting = False
-                try: await event.click(text="skip")
-                except: pass
+                await click_turbo(event, "skip")
 
-    # =========================================================
-    # HANDLERS
-    # =========================================================
-    
     @client.on(events.NewMessage(outgoing=True))
     async def octopus_cmds(event):
-        text = event.raw_text.strip()
-        if "/game@OctopusEN_Bot" in text:
+        if "/game@OctopusEN_Bot" in event.raw_text:
             client.o_start_msg_id = event.id 
             client.o_chat = event.chat_id
             client.o_running = True
-            await client.send_message("me", "🐙 **Octopus Solver Loaded & Ready.**")
+            if not client.o_my_name:
+                me = await client.get_me()
+                client.o_my_name = me.first_name
+            await client.send_message("me", "🐙 **Turbo Octopus Engine Started!**")
 
     @client.on(events.NewMessage)
     async def octopus_engine(event):
@@ -115,46 +109,43 @@ def register(client):
         
         sender = await event.get_sender()
         if not sender: return
-        # FIX: Safe NoneType check
-        s_username = (getattr(sender, "username", "") or "").lower()
+        s_user = (getattr(sender, "username", "") or "").lower()
         
-        if s_username != "octopusen_bot":
-            if not event.out and len(event.raw_text) > 1:
-                client.o_waiting = False
+        if s_user != "octopusen_bot":
+            if not event.out and len(event.raw_text) > 1: client.o_waiting = False
             return
 
         text = event.raw_text
         low = text.lower()
 
-        # Reset turn if bot responds
-        if any(x in low for x in ["got it right", "correct answer", "round:", "letters:"]):
+        # Instant round reset
+        if any(x in low for x in ["got it right", "correct answer", "round:", "letters:", "passed"]):
             client.o_waiting = False
 
-        # --- SETUP PHASE (INDEX BASED CLICKING) ---
+        # --- TURBO SETUP (Reply-tracking + Keyword) ---
         if "choose a game type" in low and event.reply_to_msg_id == client.o_start_msg_id:
-            # Index 1 is Gap-filling (0 is Paraphrase)
-            await event.click(1)
+            await click_turbo(event, "Gap-filling") # Only Gap-filling
             return
 
-        if "how many rounds" in low:
-            # Index 2 is usually 50 rounds (0:15, 1:30, 2:50)
-            await event.click(2)
+        if "how many rounds" in low and client.o_my_name in text:
+            await click_turbo(event, "50")
             return
 
-        if "difficulty" in low:
-            # Index 1 is Hard (0 is Easy)
-            await event.click(1)
+        if "difficulty" in low and client.o_my_name in text:
+            await click_turbo(event, "hard")
             return
 
-        # --- PUZZLE SOLVING ---
+        # --- PUZZLE SOLVER ---
+        # Capture 'Q: S _ _ _ _' or '🧩 S _ _ _ _'
         pattern_match = re.search(r"(?:🧩|Q:)\s*([A-Za-z](?:\s*[A-Za-z_])+)", text)
         if pattern_match and "_" in pattern_match.group(1):
             if event.id == client.o_last_msg_id: return
             client.o_last_msg_id = event.id
             
             pattern = pattern_match.group(1).strip()
+            # Extract letters line
             letters_match = re.search(r"(?:letters:|letter:)\s*(.+)", text, re.I)
-            letters = letters_match.group(1) if letters_match else " ".join(re.findall(r"\b[A-Za-z]\b", text))
+            letters = letters_match.group(1) if letters_match else " ".join(re.findall(r"\b[A-Z]\b", text))
 
             ans = solve_puzzle(pattern, letters)
             client.o_answers = ans
@@ -163,19 +154,13 @@ def register(client):
             if ans:
                 word = client.o_answers[client.o_guess_idx]
                 client.o_guess_idx += 1
+                # Final Speed Adjustment: Wait for bot to be ready
                 async with client.action(client.o_chat, 'typing'):
                     await asyncio.sleep(random.uniform(client.o_min_delay, client.o_max_delay))
                 await client.send_message(client.o_chat, word)
                 asyncio.create_task(retry_loop(event))
             else:
-                try: await event.click(text="skip")
-                except: pass
+                await click_turbo(event, "skip")
             return
 
-        # Learning
-        if any(x in low for x in ["correct answer", "passed the word", "got it right"]):
-            m = re.search(r"(?:→|⟶|answer:)\s*([A-Za-z]+)", text, re.I)
-            if m: save_learned_word(m.group(1))
-
-        if "game ended" in low:
-            client.o_running = False
+        if "game ended" in low: client.o_running = False
