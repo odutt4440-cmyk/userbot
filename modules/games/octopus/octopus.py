@@ -9,12 +9,11 @@ from telethon.tl.types import User
 from wordfreq import top_n_list, zipf_frequency
 
 # =========================================================
-# SHARED ENGINE
+# SHARED ENGINE (Fast Loading)
 # =========================================================
 FOLDER = os.path.dirname(__file__)
 CUSTOM_DICT_FILE = os.path.join(FOLDER, "octopus_words.json")
 
-print("🐙 Octopus Turbo Engine: Loading...")
 english_words = top_n_list("en", 120000)
 all_words = set()
 for w in english_words:
@@ -30,26 +29,24 @@ if os.path.exists(CUSTOM_DICT_FILE):
             for w in learned_words:
                 if w.isalpha(): all_words.add(w.lower().strip())
     except: pass
-print(f"🐙 Turbo Engine Ready: {len(all_words)} words.")
 
 # =========================================================
 # THE MODULE REGISTER
 # =========================================================
 def register(client):
-    # --- Per-User State ---
+    # --- State ---
     client.o_chat = None
     client.o_running = False
     client.o_answers = []
     client.o_guess_idx = 0
     client.o_waiting = False
     client.o_last_msg_id = 0
-    client.o_my_name = None 
-    client.o_start_msg_id = 0 # `/game` command ki ID track karne ke liye
+    client.o_start_msg_id = 0 # Track /game command ID
     
-    # Speed Config (Safe for Bot Rules)
-    client.o_min_delay = 3.1 
-    client.o_max_delay = 3.8
-    client.o_retry_int = 4.0
+    # Speed Config (Adjusted for "Fast but No Warning")
+    client.o_min_delay = 1.0 
+    client.o_max_delay = 1.8
+    client.o_retry_int = 3.5
 
     # --- HELPERS ---
     def save_learned_word(word):
@@ -68,6 +65,7 @@ def register(client):
         usable = [x.lower() for x in letters]
         for ch in pattern:
             if ch != "_": usable.append(ch)
+        
         usable_counter = Counter(usable)
         results = []
         for word in all_words:
@@ -75,15 +73,16 @@ def register(client):
             if not all(p == "_" or p == w for p, w in zip(pattern, word)): continue
             wc = Counter(word)
             if any(wc[ch] > usable_counter[ch] for ch in wc): continue
+            
             score = learned_words.get(word, 0) * 10000
             score += int(zipf_frequency(word, "en") * 100)
             score += sum(word.count(c) for c in "etaoinshrdlu")
-            score += 20 - len(word)
             results.append((word, score))
+        
         results.sort(key=lambda x: x[1], reverse=True)
         return [x[0] for x in results[:5]]
 
-    async def click_button_fast(event, keywords):
+    async def click_button_turbo(event, keywords):
         if not event.buttons: return False
         for row in event.buttons:
             for btn in row:
@@ -97,14 +96,13 @@ def register(client):
         while client.o_waiting and client.o_running:
             await asyncio.sleep(client.o_retry_int)
             if not client.o_waiting: break
+
             if client.o_guess_idx < len(client.o_answers):
                 answer = client.o_answers[client.o_guess_idx]
                 client.o_guess_idx += 1
-                async with client.action(client.o_chat, "typing"):
-                    await asyncio.sleep(0.2)
                 await client.send_message(client.o_chat, answer)
             else:
-                await click_button_fast(event, ["skip", "♻", "pass", "Next"])
+                await click_button_turbo(event, ["skip", "♻", "pass", "Next"])
                 client.o_waiting = False
 
     # =========================================================
@@ -115,23 +113,10 @@ def register(client):
     async def octopus_cmds(event):
         text = event.raw_text.strip()
         if "/game@OctopusEN_Bot" in text:
-            # 1. Store the /game message ID to track the reply
-            client.o_start_msg_id = event.id
-            
-            if not client.o_my_name:
-                me = await client.get_me()
-                client.o_my_name = me.first_name
-
+            client.o_start_msg_id = event.id # Save ID
             client.o_chat = event.chat_id
             client.o_running = True
-            await client.send_message("me", f"🐙 **Octopus Active in:** `{event.chat_id}`")
-        
-        elif text.startswith(".octo delay"):
-            try:
-                p = text.split()
-                client.o_min_delay, client.o_max_delay = float(p[2]), float(p[3])
-                await event.edit(f"✅ Speed: {client.o_min_delay}-{client.o_max_delay}s")
-            except: pass
+            await client.send_message("me", f"🐙 **Octopus Fast-Engine Active!**")
 
     @client.on(events.NewMessage)
     async def octopus_engine(event):
@@ -141,7 +126,12 @@ def register(client):
         if not sender: return
         s_username = getattr(sender, "username", "") or ""
         
-        if s_username.lower() != "octopusen_bot":
+        # If bot results arrive, stop current retry
+        if s_username.lower() == "octopusen_bot":
+            if any(x in event.raw_text.lower() for x in ["got it right", "correct answer", "round:", "passed the word"]):
+                client.o_waiting = False
+        else:
+            # If any human/other bot types a word, stop current retry
             if len(event.raw_text) > 1 and not event.raw_text.startswith('/'):
                 client.o_waiting = False
             return
@@ -149,33 +139,21 @@ def register(client):
         text = event.raw_text
         low = text.lower()
 
-        # 🔥 Reset if round ends
-        if any(x in low for x in ["got it right", "correct answer", "round:", "letters:", "passed the word"]):
-            client.o_waiting = False
-
-        # --- 1. Setup Menu Handling (Strict Tracking) ---
-        
-        if "choose a game type" in low:
-            # FIX: Only click if the bot is replying to OUR /game command
-            if event.reply_to_msg_id == client.o_start_msg_id:
-                await click_button_fast(event, ["gap", "🔠"])
+        # 1. SETUP PHASE (Using Reply Tracking)
+        if "choose a game type" in low and event.reply_to_msg_id == client.o_start_msg_id:
+            await click_button_turbo(event, ["gap", "🔠"])
             return
-
-        if "how many rounds" in low or "difficulty" in low:
-            # FIX: Use name verification for subsequent menus
-            if client.o_my_name and client.o_my_name not in text:
-                return # Someone else's game setup
             
-            if "rounds" in low:
-                await click_button_fast(event, ["50", "30"])
-            elif "difficulty" in low:
-                await click_button_fast(event, ["hard", "💣"])
+        if "how many rounds" in low or "difficulty" in low:
+            # Click buttons instantly for setup
+            if "rounds" in low: await click_button_turbo(event, ["50", "30"])
+            elif "difficulty" in low: await click_button_turbo(event, ["hard", "💣"])
             return
 
-        # --- 2. Board Detection ---
+        # 2. PUZZLE PHASE
+        # Capture puzzle (Updated Regex for Q: format)
         pattern_match = re.search(r"(?:🧩|Q:)\s*([A-Za-z](?:\s*[A-Za-z_])+)", text)
         if pattern_match and "_" in pattern_match.group(1):
-            # Verify it's not a duplicate event
             if event.id == client.o_last_msg_id: return
             client.o_last_msg_id = event.id
             
@@ -190,18 +168,19 @@ def register(client):
             if ans:
                 word = client.o_answers[client.o_guess_idx]
                 client.o_guess_idx += 1
+                # Typing Delay
                 async with client.action(client.o_chat, 'typing'):
                     await asyncio.sleep(random.uniform(client.o_min_delay, client.o_max_delay))
                 await client.send_message(client.o_chat, word)
                 asyncio.create_task(retry_loop(event))
             else:
-                await click_button_fast(event, ["skip", "♻", "pass", "Next"])
+                await click_button_turbo(event, ["skip", "♻", "pass", "Next"])
             return
 
-        # --- 3. Learning & Reset ---
+        # 3. LEARNING
         if any(x in low for x in ["correct answer", "passed the word", "got it right"]):
             m = re.search(r"(?:→|⟶|answer:)\s*([A-Za-z]+)", text, re.I)
             if m: save_learned_word(m.group(1))
 
-        if "already active games" in low or "game ended" in low:
+        if "game ended" in low:
             client.o_running = False
