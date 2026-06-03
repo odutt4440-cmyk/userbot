@@ -10,14 +10,12 @@ from telethon.tl.types import User
 from wordfreq import top_n_list, zipf_frequency
 
 # =========================================================
-# SHARED ENGINE (Original Dictionary & Scoring Logic)
+# SHARED ENGINE
 # =========================================================
 FOLDER = os.path.dirname(__file__)
 CUSTOM_DICT_FILE = os.path.join(FOLDER, "octopus_words.json")
 
-print("🐙 Octopus Engine: Loading Original English Dictionary...")
-
-# Loading top 120,000 words
+print("🐙 Octopus Engine: Loading Dictionary...")
 english_words = top_n_list("en", 120000)
 all_words = set()
 for w in english_words:
@@ -25,38 +23,31 @@ for w in english_words:
     if (w.isalpha() and len(w) >= 3 and zipf_frequency(w, "en") > 2):
         all_words.add(w)
 
-# Original Logic: Loading Learned Words
 learned_words = {}
 if os.path.exists(CUSTOM_DICT_FILE):
     try:
         with open(CUSTOM_DICT_FILE, "r") as f:
             learned_words = json.load(f)
             for w in learned_words:
-                if w.isalpha():
-                    all_words.add(w.lower().strip())
+                if w.isalpha(): all_words.add(w.lower().strip())
     except: pass
-
-print(f"🐙 Engine Ready: {len(all_words)} words loaded into shared memory.")
 
 # =========================================================
 # THE MODULE REGISTER
 # =========================================================
 def register(client):
-    # --- Per-User State Management ---
-    client.o_chat = None        # Group ID of the locked target
-    client.o_running = False     # System Master Switch
+    client.o_chat = None        
+    client.o_running = False     
     client.o_answers = []
     client.o_guess_idx = 0
-    client.o_waiting = False    # Round/Turn lock
+    client.o_waiting = False    
     client.o_last_msg_id = 0
     
     # Timing Config
     client.o_min_delay = 3.1 
     client.o_max_delay = 3.6
     client.o_retry_int = 4.5
-    client.o_max_guesses = 5
 
-    # --- HELPERS (Original Logic) ---
     def save_learned_word(word):
         word = word.lower().strip()
         if not word.isalpha() or len(word) <= 1: return
@@ -76,91 +67,63 @@ def register(client):
         
         usable_counter = Counter(usable)
         results = []
-
         for word in all_words:
             if len(word) != len(pattern): continue
             if not all(p == "_" or p == w for p, w in zip(pattern, word)): continue
             wc = Counter(word)
             if any(wc[ch] > usable_counter[ch] for ch in wc): continue
             
-            # --- Original Scoring Logic ---
-            score = learned_words.get(word, 0) * 10000 
-            score += int(zipf_frequency(word, "en") * 100) 
-            for c in "etaoinshrdlu":
-                score += word.count(c)
+            score = learned_words.get(word, 0) * 10000 + int(zipf_frequency(word, "en") * 100)
+            for c in "etaoinshrdlu": score += word.count(c)
             score += 20 - len(word)
             results.append((word, score))
         
         results.sort(key=lambda x: x[1], reverse=True)
-        return [x[0] for x in results[:client.o_max_guesses]]
+        return [x[0] for x in results[:5]]
 
     async def retry_loop(event, msg_id):
         client.o_waiting = True
         while client.o_waiting and client.o_running:
             await asyncio.sleep(client.o_retry_int)
-            # Sync Check: Break if round changed
-            if not client.o_waiting or client.o_last_msg_id != msg_id:
-                break
-
+            if not client.o_waiting or client.o_last_msg_id != msg_id: break
             if client.o_guess_idx < len(client.o_answers):
                 answer = client.o_answers[client.o_guess_idx]
                 client.o_guess_idx += 1
                 await client.send_message(client.o_chat, answer)
             else:
-                # Guesses exhausted, try to find skip button
                 client.o_waiting = False
                 if event.buttons:
                     for row in event.buttons:
                         for btn in row:
                             if any(x in btn.text.lower() for x in ["skip", "♻", "pass"]):
-                                try: await event.click(text=btn.text)
+                                try: await event.click(text=btn.text); return
                                 except: pass
                 break
 
-    # =========================================================
-    # SAVED MESSAGES CONTROL (Step 1)
-    # =========================================================
+    # --- CONTROL PANEL (Saved Messages) ---
     @client.on(events.NewMessage(chats='me', outgoing=True))
     async def control_panel(event):
         text = event.raw_text.lower().strip()
-        
         if text == ".octo on":
             client.o_running = True
-            client.o_chat = None # Reset target for fresh lock
-            await event.edit("🚀 **Octopus Engine: ARMED**\nNow send `/game` in any group to target it.")
-            
+            client.o_chat = None
+            await event.edit("🚀 **Octopus Engine: ARMED**\nTargeting next `/game` command.")
         elif text == ".octo off":
             client.o_running = False
-            client.o_chat = None
             await event.edit("🛑 **Octopus Engine: DISARMED**")
-            
-        elif text.startswith(".octo delay"):
-            try:
-                parts = text.split()
-                client.o_min_delay = float(parts[2])
-                client.o_max_delay = float(parts[3])
-                await event.edit(f"⚡ **Delay Set:** {client.o_min_delay}s - {client.o_max_delay}s")
-            except:
-                await event.edit("Format: `.octo delay 3.1 3.8`")
 
-    # =========================================================
-    # TARGET LOCK (Step 2)
-    # =========================================================
+    # --- TARGET LOCK ---
     @client.on(events.NewMessage(outgoing=True))
     async def detect_target(event):
-        # Only lock if system is ON and no chat is currently locked
-        if client.o_running and client.o_chat is None:
-            if "/game@OctopusEN_Bot" in event.raw_text:
+        if client.o_running:
+            if "/game" in event.raw_text:
                 client.o_chat = event.chat_id
-                await client.send_message("me", f"🎯 **Octopus Target Locked:** `{client.o_chat}`\nWaiting for game boards...")
+                await client.send_message("me", f"🎯 **Octopus Target Locked:** `{event.chat_id}`")
 
-    # =========================================================
-    # PUZZLE SOLVER ENGINE (Step 3 & 4)
-    # =========================================================
+    # --- MAIN ENGINE ---
     @client.on(events.NewMessage)
-    @client.on(events.MessageEdited) # Fix: Detects edits as rounds progress
+    @client.on(events.MessageEdited) 
     async def main_engine(event):
-        # Validation
         if not client.o_running or client.o_chat is None: return
         if event.chat_id != client.o_chat: return
         
@@ -168,31 +131,30 @@ def register(client):
         if not sender: return
         s_user = (getattr(sender, "username", "") or "").lower()
         
-        # Turn Interruption logic
+        # Reset retry if someone else answers
         if s_user != "octopusen_bot":
-            if not event.out and len(event.raw_text or "") > 1:
-                client.o_waiting = False
+            if not event.out and len(event.raw_text or "") > 1: client.o_waiting = False
             return
 
         text = event.raw_text or ""
         low = text.lower()
 
-        # Stop old retries if result arrives
-        if any(x in low for x in ["got it right", "correct answer", "round:", "letters:", "passed"]):
+        if any(x in low for x in ["got it right", "correct", "round:", "letters:", "passed"]):
             client.o_waiting = False
 
-        # Board Detection (Regex for 🧩 or Q: format)
-        pattern_match = re.search(r"(?:🧩|Q:)\s*([A-Za-z](?:\s*[A-Za-z_])+)", text)
+        # 🔥 UNIVERSAL BOARD DETECTION (🎯, 🧩, Q:, Round:)
+        # Looking for a line that has letters and underscores
+        pattern_match = re.search(r"([A-Za-z](?:\s+[A-Za-z_])+)", text)
         if pattern_match and "_" in pattern_match.group(1):
-            # Edit sync check
             if event.id == client.o_last_msg_id and "Round:" not in text: return
             client.o_last_msg_id = event.id
             
             pattern = pattern_match.group(1).strip()
-            letters_match = re.search(r"(?:letters:|letter:|🔠)\s*(.+)", text, re.I)
-            letters = letters_match.group(1) if letters_match else " ".join(re.findall(r"\b[A-Z]\b", text))
+            
+            # 🔥 UNIVERSAL LETTERS DETECTION (📝, 🔠, letters:)
+            letters_match = re.search(r"(?:letters:|letter:|🔠|📝)\s*(.+)", text, re.I)
+            letters = letters_match.group(1) if letters_match else " ".join(re.findall(r"\b[A-Za-z]\b", text))
 
-            # Original Solve Logic
             ans = solve_puzzle(pattern, letters)
             client.o_answers = ans
             client.o_guess_idx = 0
@@ -205,21 +167,13 @@ def register(client):
                 await client.send_message(client.o_chat, word)
                 asyncio.create_task(retry_loop(event, event.id))
             else:
-                # Click skip if no words found in dictionary
+                # Automatic skip if no solution
                 if event.buttons:
                     for row in event.buttons:
                         for btn in row:
-                            if "skip" in btn.text.lower() or "♻" in btn.text:
-                                try: await event.click(text=btn.text)
+                            if any(x in btn.text.lower() for x in ["skip", "♻", "pass"]):
+                                try: await event.click(); break
                                 except: pass
             return
 
-        # Learning Logic
-        if any(x in low for x in ["correct answer", "passed the word", "got it right"]):
-            m = re.search(r"(?:→|⟶|answer:)\s*([A-Za-z]+)", text, re.I)
-            if m: save_learned_word(m.group(1))
-
-        if "game ended" in low:
-            # Optionally auto-off or just wait for next /game
-            client.o_chat = None
-            await client.send_message("me", "🏁 **Octopus Game Ended.** System remains Armed.")
+        if "game ended" in low: client.o_chat = None
