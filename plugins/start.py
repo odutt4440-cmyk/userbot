@@ -208,11 +208,11 @@ async def games_menu(event):
         "• `.octo delay 2.6 3.2` — Adjust Timing\n\n"
         "⛓️ **WordChain Pro:**\n"
         "• `on1`, `on2`... — Join specific game ID\n"
-        "• `yes` — Join last detected game\n"
-        "• `autoplay on` | `off` — Toggle Auto-play\n"
+        "• `ban y` — ban letter ending from y or any letter u want\n"
+        "• `unban y` — unban letter ending from y or any letter u want\n"
         "• `spam random` | `spam <char>` — Ending mode\n"
         "• `settime 1 3` — Set Min/Max delay\n"
-        "• `status` — Check all active games"
+        "• `status` — Check all active games and status regarding about ban and spam"
     )
     
     buttons = [
