@@ -34,13 +34,15 @@ load_dictionary()
 # THE MODULE REGISTER
 # ==================================================
 def register(client):
-    # --- Per-User State (Isolated for SaaS) ---
-    client.wc_active_games = {} 
+    # --- Per-User State (Fully Isolated for Multi-GC) ---
+    client.wc_active_games = {} # {chat_id: {"used": set(), "title": str}}
     client.wc_autoplay = {}     
-    client.wc_spam_mode = {}    # "random", "longest", or specific char
-    client.wc_banned_ends = {}  
-    client.wc_min_delay = 4
-    client.wc_max_delay = 8
+    client.wc_spam_mode = {}    # Per-chat Spam logic
+    client.wc_banned_ends = {}  # Per-chat Banned logic
+    client.wc_delays = {}       # 🔥 NEW: Per-chat Delay logic {chat_id: (min, max)}
+    
+    client.wc_global_min = 4    # Default Fallback
+    client.wc_global_max = 8
     client.wc_me = None
     client.wc_delete_saved = True
 
@@ -51,7 +53,9 @@ def register(client):
         return client.wc_me
 
     async def typing(chat_id):
-        delay = random.uniform(client.wc_min_delay, client.wc_max_delay)
+        # 🔥 Pull delay for specific chat, else use global
+        d_min, d_max = client.wc_delays.get(chat_id, (client.wc_global_min, client.wc_global_max))
+        delay = random.uniform(d_min, d_max)
         try:
             await client(SetTypingRequest(peer=chat_id, action=SendMessageTypingAction()))
         except: pass
@@ -67,13 +71,11 @@ def register(client):
         pool = STARTS.get(start.lower(), []) if start else list(WORDS)
         
         pick_longest = (end == "longest")
-        
         if end == "random":
             end = random.choice(list("abcdefghijklmnopqrstuvwxyz"))
         elif pick_longest:
-            end = None # Reset end for searching longest overall
+            end = None
 
-        # Helper to check constraints
         def is_perfect(w):
             if w in used or len(w) < min_len: return False
             if end and not w.endswith(end): return False
@@ -82,130 +84,133 @@ def register(client):
             if any(b in w for b in banned): return False
             return True
 
-        # Strategy 1: Candidate Gathering
         candidates = [w for w in pool if is_perfect(w)]
-        
         if candidates:
-            if pick_longest:
-                return max(candidates, key=len)
-            return random.choice(candidates)
+            return max(candidates, key=len) if pick_longest else random.choice(candidates)
 
-        # Strategy 2: FALLBACK (Ignore spam ending but keep banned_end check)
         fallback = [w for w in pool if (w not in used and len(w) >= min_len and 
                    (not banned_end or not w.endswith(banned_end)) and 
                    (not required or required in w) and not any(b in w for b in banned))]
-        
         if fallback:
-            if pick_longest:
-                return max(fallback, key=len)
-            return random.choice(fallback)
+            return max(fallback, key=len) if pick_longest else random.choice(fallback)
 
-        # Strategy 3: ABSOLUTE FALLBACK (No banned ending allowed)
         any_valid = [w for w in pool if w not in used and len(w) >= min_len and (not banned_end or not w.endswith(banned_end))]
-        
-        if any_valid:
-            if pick_longest:
-                return max(any_valid, key=len)
-            return random.choice(any_valid)
-            
-        return None
+        return max(any_valid, key=len) if (any_valid and pick_longest) else (random.choice(any_valid) if any_valid else None)
 
     # ==================================================
     # SAVED MESSAGE COMMANDS (THE CONTROL PANEL)
     # ==================================================
     @client.on(events.NewMessage(chats="me"))
     async def saved_commands(event):
-        text = (event.raw_text or "").lower().strip()
-
-        # 🟢 Command: ON
-        if text.startswith("on"):
-            num = text.replace("on", "").strip()
-            if not num.isdigit(): return
-            num = int(num)
+        raw_text = (event.raw_text or "").lower().strip()
+        
+        # --- 🎯 STEP 1: TARGET PARSER (onX extractor) ---
+        target_chat = None
+        clean_command = raw_text
+        match_on = re.search(r"(.*)\s+on(\d+)$", raw_text)
+        
+        if match_on:
+            clean_command = match_on.group(1).strip()
+            idx = int(match_on.group(2))
             chats = list(client.wc_active_games.keys())
-            if num > len(chats):
-                return await client.send_message("me", "❌ INVALID GAME ID")
-            
-            chat_id = chats[num - 1]
-            try:
-                join_msg = await client.send_message(chat_id, "/join")
-                await asyncio.sleep(1)
-                try: await client.delete_messages(chat_id, [join_msg.id])
-                except: pass
-                client.wc_autoplay[chat_id] = True
-                await client.send_message("me", f"✅ **JOINED + AUTOPLAY ON**\nGroup: {client.wc_active_games[chat_id]['title']}")
-            except: pass
-            if client.wc_delete_saved: await event.delete()
-
-        # 🚫 Command: BAN (Ending letter)
-        elif text.startswith("ban "):
-            letter = text.replace("ban ", "").strip().lower()
-            if len(letter) == 1:
-                if client.wc_active_games:
-                    chat_id = list(client.wc_active_games.keys())[-1]
-                    client.wc_banned_ends[chat_id] = letter
-                    # Auto-Fix: Clear conflicting spam mode
-                    if client.wc_spam_mode.get(chat_id) == letter:
-                        client.wc_spam_mode[chat_id] = None
-                    await client.send_message("me", f"🚫 **Ending Banned:** `{letter.upper()}`")
-            if client.wc_delete_saved: await event.delete()
-
-        # ⚪ Command: UNBAN
-        elif text.startswith("unban "):
-            letter = text.replace("unban ", "").strip().lower()
-            if client.wc_active_games:
-                chat_id = list(client.wc_active_games.keys())[-1]
-                if client.wc_banned_ends.get(chat_id) == letter:
-                    del client.wc_banned_ends[chat_id]
-                    await client.send_message("me", f"✅ **Unbanned:** Ending `{letter.upper()}` is now allowed.")
-                else:
-                    await client.send_message("me", f"❌ `{letter.upper()}` was not banned.")
-            if client.wc_delete_saved: await event.delete()
-
-        # 🔥 Command: SPAM (Added Longest support)
-        elif text.startswith("spam "):
-            mode = text.replace("spam ", "").strip().lower()
-            if client.wc_active_games:
-                chat_id = list(client.wc_active_games.keys())[-1]
-                
-                # Check for Ban Conflict
-                if len(mode) == 1 and client.wc_banned_ends.get(chat_id) == mode:
-                    await client.send_message("me", f"❌ **Conflict:** Letter `{mode.upper()}` is currently BANNED. Unban it first.")
-                    return
-
-                client.wc_spam_mode[chat_id] = mode
-                await client.send_message("me", f"✅ **SPAM MODE:** {mode.upper()}")
-            if client.wc_delete_saved: await event.delete()
-
-        # 📊 Command: STATUS
-        elif text == "status":
-            if client.wc_active_games:
-                chat_id = list(client.wc_active_games.keys())[-1]
-                # FIX: Added fallback "None" so .upper() never fails
-                banned = client.wc_banned_ends.get(chat_id) or "None"
-                spam = client.wc_spam_mode.get(chat_id) or "None"
-                
-                status_msg = (
-                    f"🤖 **WordChain Status**\n\n"
-                    f"📡 **Active Games:** `{len(client.wc_active_games)}`\n"
-                    f"⏱️ **Delay:** `{client.wc_min_delay}-{client.wc_max_delay}s`\n"
-                    f"🔥 **Spam Mode:** `{spam.upper()}`\n"
-                    f"🚫 **Banned End:** `{banned.upper()}`"
-                )
-                await client.send_message("me", status_msg)
+            if idx <= len(chats):
+                target_chat = chats[idx - 1]
             else:
-                await client.send_message("me", "❌ **Error:** No active games detected.")
-            
-            if client.wc_delete_saved: 
-                await event.delete()
+                return await client.send_message("me", f"❌ **Error:** Group `on{idx}` not found.")
+        else:
+            if client.wc_active_games:
+                target_chat = list(client.wc_active_games.keys())[-1]
 
-        # ⏱ Command: SETTIME
-        elif text.startswith("settime"):
-            parts = text.split()
+        # --- 🟢 COMMAND: JOIN (on1, on2...) ---
+        if raw_text.startswith("on") and not " " in raw_text:
+            num = raw_text.replace("on", "").strip()
+            if num.isdigit():
+                idx = int(num)
+                chats = list(client.wc_active_games.keys())
+                if idx <= len(chats):
+                    cid = chats[idx - 1]
+                    try:
+                        m = await client.send_message(cid, "/join")
+                        await asyncio.sleep(1)
+                        try: await client.delete_messages(cid, [m.id])
+                        except: pass
+                        client.wc_autoplay[cid] = True
+                        await client.send_message("me", f"✅ **JOINED:** {client.wc_active_games[cid]['title']}")
+                    except: pass
+                if client.wc_delete_saved: await event.delete()
+            return
+
+        # --- 🚫 COMMAND: BAN ---
+        if clean_command.startswith("ban "):
+            if not target_chat: return
+            letter = clean_command.replace("ban ", "").strip().lower()
+            if len(letter) == 1:
+                client.wc_banned_ends[target_chat] = letter
+                if client.wc_spam_mode.get(target_chat) == letter:
+                    client.wc_spam_mode[target_chat] = None
+                gn = client.wc_active_games[target_chat]['title']
+                await client.send_message("me", f"🚫 **Banned Ending:** `{letter.upper()}` for `{gn}`")
+
+        # --- ⚪ COMMAND: UNBAN ---
+        elif clean_command.startswith("unban "):
+            if not target_chat: return
+            letter = clean_command.replace("unban ", "").strip().lower()
+            if client.wc_banned_ends.get(target_chat) == letter:
+                del client.wc_banned_ends[target_chat]
+                gn = client.wc_active_games[target_chat]['title']
+                await client.send_message("me", f"✅ **Unbanned:** `{letter.upper()}` for `{gn}`")
+
+        # --- 🔥 COMMAND: SPAM ---
+        elif clean_command.startswith("spam "):
+            if not target_chat: return
+            mode = clean_command.replace("spam ", "").strip().lower()
+            if len(mode) == 1 and client.wc_banned_ends.get(target_chat) == mode:
+                await client.send_message("me", f"❌ **Conflict:** `{mode.upper()}` is BANNED in this group.")
+                return
+            client.wc_spam_mode[target_chat] = mode
+            gn = client.wc_active_games[target_chat]['title']
+            await client.send_message("me", f"🔥 **Spam Mode:** `{mode.upper()}` for `{gn}`")
+
+        # --- 📊 COMMAND: STATUS ---
+        elif clean_command == "status":
+            if not client.wc_active_games:
+                return await client.send_message("me", "❌ No active games detected.")
+            
+            # If 'status on1' -> Show specific details
+            if match_on:
+                idx = int(match_on.group(2))
+                chats = list(client.wc_active_games.keys())
+                cid = chats[idx - 1]
+                data = client.wc_active_games[cid]
+                b = (client.wc_banned_ends.get(cid) or "None").upper()
+                s = (client.wc_spam_mode.get(cid) or "None").upper()
+                d_min, d_max = client.wc_delays.get(cid, (client.wc_global_min, client.wc_global_max))
+                msg = (f"📑 **Group Details: on{idx}**\n\n"
+                       f"🏷️ **Title:** `{data['title']}`\n"
+                       f"🔥 **Spam:** `{s}`\n"
+                       f"🚫 **Ban:** `{b}`\n"
+                       f"⏱️ **Delay:** `{d_min}-{d_max}s`\n"
+                       f"🎮 **Used Words:** `{len(data['used'])}`")
+                await client.send_message("me", msg)
+            else:
+                # If just 'status' -> Show overall list
+                msg = "🤖 **WordChain Pro Dashboard**\n\n"
+                for i, (cid, data) in enumerate(client.wc_active_games.items(), 1):
+                    msg += f"**on{i}** - `{data['title']}`\n"
+                msg += "\n👉 _Type 'status on1' for full details._"
+                await client.send_message("me", msg)
+
+        # --- ⏱ COMMAND: SETTIME ---
+        elif clean_command.startswith("settime"):
+            if not target_chat: return
+            parts = clean_command.split()
             if len(parts) == 3:
-                client.wc_min_delay, client.wc_max_delay = int(parts[1]), int(parts[2])
-                await client.send_message("me", f"✅ **DELAY:** {client.wc_min_delay}-{client.wc_max_delay}s")
-            if client.wc_delete_saved: await event.delete()
+                s_min, s_max = int(parts[1]), int(parts[2])
+                client.wc_delays[target_chat] = (s_min, s_max)
+                gn = client.wc_active_games[target_chat]['title']
+                await client.send_message("me", f"✅ **Delay Set:** {s_min}-{s_max}s for `{gn}`")
+
+        if client.wc_delete_saved: await event.delete()
 
     # ==================================================
     # GAME DETECTION & LOGIC (Original Intact)
