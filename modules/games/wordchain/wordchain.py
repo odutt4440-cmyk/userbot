@@ -121,7 +121,7 @@ def register(client):
             if client.wc_active_games:
                 target_chat = list(client.wc_active_games.keys())[-1]
 
-        # --- 🟢 COMMAND: JOIN (on1, on2...) ---
+        # 🟢 Command: on1, on2 (Join Game)
         if raw_text.startswith("on") and not " " in raw_text:
             num = raw_text.replace("on", "").strip()
             if num.isdigit():
@@ -129,14 +129,17 @@ def register(client):
                 chats = list(client.wc_active_games.keys())
                 if idx <= len(chats):
                     cid = chats[idx - 1]
+                    title = client.wc_active_games[cid]['title']
                     try:
                         m = await client.send_message(cid, "/join")
                         await asyncio.sleep(1)
                         try: await client.delete_messages(cid, [m.id])
                         except: pass
                         client.wc_autoplay[cid] = True
-                        await client.send_message("me", f"✅ **JOINED:** {client.wc_active_games[cid]['title']}")
-                    except: pass
+                        await client.send_message("me", f"✅ **SUCCESS:** Joined `{title}` (on{idx}) with Autoplay ON.")
+                    except Exception as e:
+                        await client.send_message("me", f"❌ **FAILED:** Could not join `{title}`. Error: {e}")
+                
                 if client.wc_delete_saved: await event.delete()
             return
 
@@ -213,7 +216,7 @@ def register(client):
         if client.wc_delete_saved: await event.delete()
 
     # ==================================================
-    # GAME DETECTION & LOGIC (Original Intact)
+    # GAME DETECTION
     # ==================================================
     GAME_PATTERNS = ["/startclassic", "/startchaos", "/starthard", "/startelim", "/startmelim", "/startrfl", "/startrl", "/startbl", "the first word is", "turn order"]
 
@@ -224,8 +227,18 @@ def register(client):
 
         if any(p in text for p in GAME_PATTERNS):
             if event.chat_id not in client.wc_active_games:
-                client.wc_active_games[event.chat_id] = {"used": set(), "title": getattr(event.chat, "title", "Unknown")}
-                await client.send_message("me", f"🎮 **GAME DETECTED**\nID: {len(client.wc_active_games)}\nType `on{len(client.wc_active_games)}` to join.")
+                
+                title = getattr(event.chat, "title", "Unknown Group")
+                client.wc_active_games[event.chat_id] = {"used": set(), "title": title}
+                game_no = len(client.wc_active_games)
+                
+                # 🔥 Notification with GC Name
+                await client.send_message("me", 
+                    f"🎮 **GAME DETECTED**\n"
+                    f"📍 **GC:** `{title}`\n"
+                    f"🆔 **ID:** `on{game_no}`\n\n"
+                    f"👉 Type `on{game_no}` to join this group.")
+
 
         me = await get_me()
         my_names = [me.first_name.lower()]
