@@ -8,7 +8,7 @@ from telethon.tl.functions.messages import DeleteMessagesRequest, SetTypingReque
 from telethon.tl.types import SendMessageTypingAction
 
 # ==================================================
-# SHARED DICTIONARY (Memory Efficiency)
+# SHARED DICTIONARY (Load once to save RAM)
 # ==================================================
 WORDS = set()
 STARTS = defaultdict(list)
@@ -38,13 +38,13 @@ def register(client):
     client.wc_active_games = {} 
     client.wc_autoplay = {}     
     client.wc_spam_mode = {}    
-    client.wc_banned_ends = {}  # 🔥 NEW: Track banned ending letters per chat
+    client.wc_banned_ends = {}  
     client.wc_min_delay = 4
     client.wc_max_delay = 8
     client.wc_me = None
     client.wc_delete_saved = True
 
-    # --- HELPERS (Original Logic) ---
+    # --- HELPERS ---
     async def get_me():
         if not client.wc_me:
             client.wc_me = await client.get_me()
@@ -69,41 +69,43 @@ def register(client):
         if end == "random":
             end = random.choice(list("abcdefghijklmnopqrstuvwxyz"))
 
-        # Strategy 1: PERFECT MATCH (Start + End + Required + Not Banned End)
+        # Strategy 1: PERFECT MATCH (Everything matched)
         perfect = []
         for w in pool:
             if w in used or len(w) < min_len: continue
             if end and not w.endswith(end): continue
-            if banned_end and w.endswith(banned_end): continue # 🔥 Anti-Ending logic
+            if banned_end and w.endswith(banned_end): continue # Anti-Ending
             if required and required not in w: continue
             if any(b in w for b in banned): continue
             perfect.append(w)
-        
         if perfect: return random.choice(perfect)
 
-        # Strategy 2: FALLBACK (Ignoring specific ending but keeping banned_end check)
+        # Strategy 2: FALLBACK (Ignore spam ending but keep banned_end check)
         fallback = []
         for w in pool:
             if w in used or len(w) < min_len: continue
-            if banned_end and w.endswith(banned_end): continue # 🔥 Keep avoiding banned end
+            if banned_end and w.endswith(banned_end): continue # Strictly block banned end
             if required and required not in w: continue
             if any(b in w for b in banned): continue
             fallback.append(w)
-            
         if fallback: return random.choice(fallback)
 
-        # Strategy 3: ABSOLUTE FALLBACK (Any valid start)
-        any_valid = [w for w in pool if w not in used and len(w) >= min_len]
+        # Strategy 3: ABSOLUTE FALLBACK (Any valid start without banned ending)
+        any_valid = []
+        for w in pool:
+            if w in used or len(w) < min_len: continue
+            if banned_end and w.endswith(banned_end): continue # Block even in last resort
+            any_valid.append(w)
         return random.choice(any_valid) if any_valid else None
 
     # ==================================================
-    # SAVED MESSAGE COMMANDS (The Control Panel)
+    # SAVED MESSAGE COMMANDS (THE CONTROL PANEL)
     # ==================================================
     @client.on(events.NewMessage(chats="me"))
     async def saved_commands(event):
         text = (event.raw_text or "").lower().strip()
 
-        # Command: on1, on2... (Auto join specific game)
+        # Command: on1, on2...
         if text.startswith("on"):
             num = text.replace("on", "").strip()
             if not num.isdigit(): return
@@ -123,20 +125,51 @@ def register(client):
             except: pass
             if client.wc_delete_saved: await event.delete()
 
-        # Command: .ban y (Avoid words ending in 'y')
-        elif text.startswith(".ban "):
-            letter = text.replace(".ban ", "").strip()
+        # Command: ban y (Bina Dot ke!)
+        elif text.startswith("ban "):
+            letter = text.replace("ban ", "").strip()
             if len(letter) == 1:
-                # Last chat lock logic
                 if client.wc_active_games:
                     chat_id = list(client.wc_active_games.keys())[-1]
                     client.wc_banned_ends[chat_id] = letter.lower()
-                    await client.send_message("me", f"🚫 **Ending Banned:** Bot will not use words ending in `{letter.upper()}`")
+                    # Reset conflicting spam mode
+                    if client.wc_spam_mode.get(chat_id) == letter.lower():
+                        client.wc_spam_mode[chat_id] = None
+                    await client.send_message("me", f"🚫 **Ending Banned:** `{letter.upper()}`\n(Note: Spam mode for this letter cleared if it was active)")
+            if client.wc_delete_saved: await event.delete()
+
+        # Command: yes
+        elif text == "yes":
+            if not client.wc_active_games: return
+            chat_id = list(client.wc_active_games.keys())[-1]
+            client.wc_autoplay[chat_id] = True
+            await client.send_message("me", "✅ AUTOPLAY ENABLED")
+            if client.wc_delete_saved: await event.delete()
+
+        # Command: spam random / spam x
+        elif text.startswith("spam "):
+            parts = text.split()
+            if len(parts) == 2:
+                mode = parts[1].lower()
+                if client.wc_active_games:
+                    chat_id = list(client.wc_active_games.keys())[-1]
+                    # Check if this letter is banned
+                    if mode != "random" and client.wc_banned_ends.get(chat_id) == mode[-1]:
+                        await client.send_message("me", f"❌ **Error:** Letter `{mode[-1].upper()}` is banned. Unban it first.")
+                    else:
+                        client.wc_spam_mode[chat_id] = "random" if mode == "random" else mode[-1]
+                        await client.send_message("me", f"✅ SPAM: {mode.upper()}")
             if client.wc_delete_saved: await event.delete()
 
         # Command: status
         elif text == "status":
-            await client.send_message("me", f"🤖 **WordChain Pro Online**\nWords: {len(WORDS)}\nGames: {len(client.wc_active_games)}\nDelay: {client.wc_min_delay}-{client.wc_max_delay}s")
+            if client.wc_active_games:
+                chat_id = list(client.wc_active_games.keys())[-1]
+                banned = client.wc_banned_ends.get(chat_id, "None")
+                spam = client.wc_spam_mode.get(chat_id, "None")
+                await client.send_message("me", f"🤖 **WordChain Pro**\nGames: {len(client.wc_active_games)}\nDelay: {client.wc_min_delay}-{client.wc_max_delay}s\nSpam: `{spam.upper()}`\nBanned: `{banned.upper()}`")
+            else:
+                await client.send_message("me", "No active games.")
             if client.wc_delete_saved: await event.delete()
 
         # Command: settime 2 5
@@ -145,16 +178,6 @@ def register(client):
             if len(parts) == 3:
                 client.wc_min_delay, client.wc_max_delay = int(parts[1]), int(parts[2])
                 await client.send_message("me", f"✅ DELAY: {client.wc_min_delay}-{client.wc_max_delay}s")
-            if client.wc_delete_saved: await event.delete()
-
-        # Command: spam random / spam x
-        elif text.startswith("spam "):
-            parts = text.split()
-            if len(parts) == 2:
-                mode = parts[1].lower()
-                for k in client.wc_active_games:
-                    client.wc_spam_mode[k] = "random" if mode == "random" else mode[-1]
-                await client.send_message("me", f"✅ SPAM: {mode.upper()}")
             if client.wc_delete_saved: await event.delete()
 
     # ==================================================
@@ -167,13 +190,11 @@ def register(client):
         if event.is_private: return
         text = (event.raw_text or "").lower()
 
-        # 1. Game Detection
         if any(p in text for p in GAME_PATTERNS):
             if event.chat_id not in client.wc_active_games:
                 client.wc_active_games[event.chat_id] = {"used": set(), "title": getattr(event.chat, "title", "Unknown")}
                 await client.send_message("me", f"🎮 **GAME DETECTED**\nID: {len(client.wc_active_games)}\nType `on{len(client.wc_active_games)}` to join.")
 
-        # 2. Join Detection
         me = await get_me()
         my_names = [me.first_name.lower()]
         if me.username: my_names.append(me.username.lower())
@@ -182,24 +203,18 @@ def register(client):
             client.wc_autoplay[event.chat_id] = True
             await client.send_message("me", f"⚡ **AUTOPLAY ACTIVE** for this group.")
 
-        # ==================================================
-        # CORE GAMEPLAY
-        # ==================================================
         if event.chat_id not in client.wc_autoplay or not client.wc_autoplay[event.chat_id]:
             return
 
-        # Track Used Words
         word_used_match = re.search(r"([a-z]+)\s+(is accepted|has been used)", text)
         if word_used_match:
             client.wc_active_games[event.chat_id]["used"].add(word_used_match.group(1).lower())
 
-        # Turn Check
         if "turn:" not in text: return
         turn_match = re.search(r"turn:\s*([^\(\n]+)", text)
         if not turn_match or not any(n in turn_match.group(1).lower() for n in my_names):
             return
 
-        # Constraints
         start_letter = None
         if "start with" in text:
             m = re.search(r"start with\s*([a-z])", text)
@@ -210,18 +225,17 @@ def register(client):
         if not start_letter: return
 
         req = re.search(r"include\s+([a-z])", text)
-        ban = re.search(r"exclude\s+(.*?)(?:and|\.|\n)", text)
+        ban_req = re.search(r"exclude\s+(.*?)(?:and|\.|\n)", text)
         ml = re.search(r"at least\s+(\d+)", text)
         
-        # FIND WORD
         word = get_valid_word(
             start=start_letter,
             end=client.wc_spam_mode.get(event.chat_id),
             required=req.group(1).lower() if req else None,
-            banned=re.findall(r"[a-z]", ban.group(1)) if ban else [],
+            banned=re.findall(r"[a-z]", ban_req.group(1)) if ban_req else [],
             used=client.wc_active_games[event.chat_id]["used"],
             min_len=int(ml.group(1)) if ml else 1,
-            banned_end=client.wc_banned_ends.get(event.chat_id) # 🔥 Pass banned end
+            banned_end=client.wc_banned_ends.get(event.chat_id)
         )
 
         if word:
