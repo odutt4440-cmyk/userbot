@@ -215,7 +215,8 @@ async def games_menu(event):
         "• `unban y`| `unban y onx` — unban letter ending from y or any letter u want\n"
         "• `spam random` | `spam <char>` — Ending mode\n"
         "• `spam longest` — Spam longest words\n"
-        "• `settime 1 3` — Set Min/Max delay\n"
+        "• `settime 1 3 onx` — Set Min/Max delay\n"
+        "• `status onx` — Check  and status regarding about ban and spam for specific gc\n"
         "• `status` — Check all active games and status regarding about ban and spam"
     )
     
