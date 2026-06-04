@@ -181,10 +181,23 @@ def register(client):
         elif text == "status":
             if client.wc_active_games:
                 chat_id = list(client.wc_active_games.keys())[-1]
-                banned = client.wc_banned_ends.get(chat_id, "None")
-                spam = client.wc_spam_mode.get(chat_id, "None")
-                await client.send_message("me", f"🤖 **WordChain Status**\nDelay: {client.wc_min_delay}-{client.wc_max_delay}s\nSpam: `{spam.upper()}`\nBanned End: `{banned.upper()}`")
-            if client.wc_delete_saved: await event.delete()
+                # FIX: Added fallback "None" so .upper() never fails
+                banned = client.wc_banned_ends.get(chat_id) or "None"
+                spam = client.wc_spam_mode.get(chat_id) or "None"
+                
+                status_msg = (
+                    f"🤖 **WordChain Status**\n\n"
+                    f"📡 **Active Games:** `{len(client.wc_active_games)}`\n"
+                    f"⏱️ **Delay:** `{client.wc_min_delay}-{client.wc_max_delay}s`\n"
+                    f"🔥 **Spam Mode:** `{spam.upper()}`\n"
+                    f"🚫 **Banned End:** `{banned.upper()}`"
+                )
+                await client.send_message("me", status_msg)
+            else:
+                await client.send_message("me", "❌ **Error:** No active games detected.")
+            
+            if client.wc_delete_saved: 
+                await event.delete()
 
         # ⏱ Command: SETTIME
         elif text.startswith("settime"):
