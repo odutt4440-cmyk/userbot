@@ -3,9 +3,10 @@ import os
 import glob
 import importlib
 import asyncio
-import shutil # File copy karne ke liye
+import shutil 
 import datetime
 from telethon import functions, types
+# Ensure these are defined in your config.py
 from config import API_ID, API_HASH, BOT_TOKEN, LOG_GROUP, ADMIN_ID, BACKUP_CHAT
 from bot_instance import bot 
 from database import init_db 
@@ -26,7 +27,7 @@ async def auto_backup_task():
         
         if os.path.exists("community.db"):
             try:
-                # 1. Temporary copy banao
+                # 1. Temporary copy taaki 'database is locked' error na aaye
                 timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
                 backup_name = f"backup_{timestamp}.db"
                 shutil.copy("community.db", backup_name)
@@ -34,20 +35,18 @@ async def auto_backup_task():
                 caption = (
                     "📂 **Empire SaaS: Security Backup**\n"
                     f"📅 **Date:** `{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}`\n\n"
-                    "Ye file aapka pura data hold karti hai. VPS change karte waqt ise use karein."
+                    "Ye file aapka pura data hold karti hai. Ise hamesha safe rakhein."
                 )
                 
-                # --- SEND TO ADMIN DM (Safety Layer 1) ---
-                await bot.send_file(ADMIN_ID, backup_name, caption=caption + "\n🔰 Mode: `Private Admin Backup`")
+                # Mode 1: Admin Private DM
+                await bot.send_file(ADMIN_ID, backup_name, caption=caption + "\n🔰 Type: `Private Admin Backup`")
                 
-                # --- SEND TO BACKUP CHAT (Safety Layer 2) ---
-                if BACKUP_CHAT != 0:
-                    await bot.send_file(BACKUP_CHAT, backup_name, caption=caption + "\n📢 Mode: `Dedicated Storage Backup`")
+                # Mode 2: Dedicated Backup GC
+                if BACKUP_CHAT:
+                    await bot.send_file(BACKUP_CHAT, backup_name, caption=caption + "\n📢 Type: `Storage Backup`")
                 
-                # Cleanup temporary file
                 os.remove(backup_name)
-                log.info(f"✅ Auto-Backup successful for {timestamp}")
-                
+                log.info(f"✅ Auto-Backup successful.")
             except Exception as e:
                 log.error(f"❌ Backup Task Failed: {e}")
 
@@ -83,25 +82,42 @@ async def start_bot():
             scope=types.BotCommandScopeDefault(),
             lang_code='en',
             commands=[
-                types.BotCommand(command='start', description='Start the bot and see menu'),
-                types.BotCommand(command='help', description='Rules and Help info'),
-                types.BotCommand(command='modules', description='Explore userbot modules')
+                types.BotCommand(command='start', description='Start menu'),
+                types.BotCommand(command='help', description='Guide'),
+                types.BotCommand(command='modules', description='Modules')
             ]
         ))
     except: pass
 
-    # --- MAIN LOG GC (Only Status/Activity) ---
+    # --- 📢 LOG LAYER 1: MAIN ACTIVITY GROUP ---
     if LOG_GROUP:
         try:
-            await bot.send_message(LOG_GROUP, "🚀 **Userbot Community Bot Started Successfully!**\n\nDatabase: `SQLite (Local)`\nStatus: `Running`\nBackup: `Enabled (Every 6h)`")
+            await bot.send_message(
+                LOG_GROUP, 
+                "🚀 **Userbot Community Bot is Online!**\n\n"
+                "• Database: `SQLite (Local)`\n"
+                "• Status: `Active`"
+            )
         except Exception as e:
-            log.error(f"Failed to send startup log: {e}")
+            log.error(f"Activity Log failed: {e}")
+
+    # --- 📂 LOG LAYER 2: DEDICATED BACKUP GROUP ---
+    if BACKUP_CHAT:
+        try:
+            await bot.send_message(
+                BACKUP_CHAT, 
+                "📂 **Database Backup System Active!**\n\n"
+                "• Storage: `community.db`\n"
+                "• Frequency: `Every 6 Hours`\n"
+                "• Security: `Encrypted Sync` (Ready)"
+            )
+        except Exception as e:
+            log.error(f"Backup Log failed: {e}")
     
     # STEP 3: LOAD PLUGINS
     load_plugins()
 
-    # 🔥 STEP 4: TRIGGER BACKUP IN BACKGROUND
-    # Isse bot freeze nahi hoga, backup piche chalta rahega
+    # STEP 4: TRIGGER BACKUP IN BACKGROUND
     asyncio.create_task(auto_backup_task())
     
     print("---------------------------------------")
