@@ -77,17 +77,22 @@ async def start_bot():
     await bot.start(bot_token=BOT_TOKEN)
 
     # --- SET BOT COMMANDS ---
+    # --- SET BOT COMMANDS VIA CODE ---
     try:
         await bot(functions.bots.SetBotCommandsRequest(
             scope=types.BotCommandScopeDefault(),
             lang_code='en',
             commands=[
-                types.BotCommand(command='start', description='Start menu'),
-                types.BotCommand(command='help', description='Guide'),
-                types.BotCommand(command='modules', description='Modules')
+                types.BotCommand(command='start', description='Open main menu'),
+                types.BotCommand(command='modules', description='Explore all userbot tools'),
+                types.BotCommand(command='plan', description='View premium pricing plans'), # <--- Naya
+                types.BotCommand(command='me', description='Check your profile and expiry'), # <--- Naya
+                types.BotCommand(command='help', description='Empire community guide')
             ]
         ))
-    except: pass
+        log.info("Successfully synced bot commands to Telegram.")
+    except Exception as e:
+        log.error(f"Failed to sync commands: {e}")
 
     # --- 📢 LOG LAYER 1: MAIN ACTIVITY GROUP ---
     if LOG_GROUP:
