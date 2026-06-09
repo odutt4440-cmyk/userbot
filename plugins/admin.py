@@ -18,6 +18,8 @@ from database import (
     is_staff,
     get_sudo_info, 
     DB_FILE,
+    set_plan_status,
+    is_plan_available,
     set_maintenance
 )
 
@@ -144,27 +146,63 @@ async def unban_handler(event):
     await event.reply(f"✅ **User Unbanned:** `{user_id}`.")
 
 # --- 4. PAYMENT & SUBS (Powers: can_pay) ---
-
-@bot.on(events.NewMessage(pattern=r'/approve (\d+) (\d+)(?: (\d+))?(?: (\d+))?'))
+# --- 3. GRANULAR APPROVE: /approve <id> <plan> <d> <h> <m> ---
+@bot.on(events.NewMessage(pattern=r'/approve (\d+) (\w+) (\d+)(?: (\d+))?(?: (\d+))?'))
 async def manual_approve(event):
     p = await get_sudo_powers(event.sender_id)
     if not p or not p['can_pay']: return
     
-    u, d = int(event.pattern_match.group(1)), int(event.pattern_match.group(2))
-    h, m = int(event.pattern_match.group(3) or 0), int(event.pattern_match.group(4) or 0)
-    await add_subscription(u, d, h, m)
-    await event.reply(f"✅ Added {d}d {h}h {m}m to `{u}`.")
-    try: await bot.send_message(u, "🎉 Premium Activated!")
-    except: pass
+    try:
+        user_id = int(event.pattern_match.group(1))
+        plan_raw = event.pattern_match.group(2).replace("_", " ") # Ultra_Standard -> Ultra Standard
+        days = int(event.pattern_match.group(3))
+        hours = int(event.pattern_match.group(4) or 0)
+        minutes = int(event.pattern_match.group(5) or 0)
+        
+        # database.py ka updated function call karega
+        expiry = await add_subscription(user_id, plan_type=plan_raw, days=days, hours=hours, minutes=minutes)
+        
+        time_str = f"{days}d {hours}h {minutes}m"
+        await event.reply(
+            f"✅ **Approved with Precision!**\n\n"
+            f"👤 **User:** `{user_id}`\n"
+            f"💎 **Plan:** `{plan_raw}`\n"
+            f"⏳ **Added:** `{time_str}`\n"
+            f"📅 **New Expiry:** `{expiry.strftime('%Y-%m-%d %H:%M:%S')}`"
+        )
+        
+        # User notification
+        msg = (f"🎉 **Premium Activated!**\n\n"
+               f"Plan: **{plan_raw}**\n"
+               f"Duration: **{time_str}**\n\n")
+        if "Ultra" in plan_raw:
+            msg += "🎁 **Note:** Since you purchased an **Ultra Plan**, please contact support to receive your new account ID!"
+        
+        await bot.send_message(user_id, msg, buttons=[[Button.inline("⚙️ Open Modules", data="modules_main")]])
+        
+    except Exception as e:
+        await event.reply(f"❌ **Error:** `{e}`")
 
+# --- 4. CANCEL PLAN: /cancel <id> ---
 @bot.on(events.NewMessage(pattern=r'/cancel (\d+)'))
 async def cancel_handler(event):
     p = await get_sudo_powers(event.sender_id)
     if not p or not p['can_pay']: return
+    
     user_id = int(event.pattern_match.group(1))
+    
+    # 1. Database me status 'expired' karo aur date reset karo
     await cancel_subscription(user_id)
-    if user_id in ACTIVE_CLIENTS: await SessionManager.stop_userbot(user_id)
-    await event.reply(f"📉 **Plan Cancelled:** `{user_id}`.")
+    
+    # 2. Memory se active bot session uda do
+    if user_id in ACTIVE_CLIENTS:
+        await SessionManager.stop_userbot(user_id)
+        
+    await event.reply(f"📉 **Plan Terminated:** User `{user_id}` access has been revoked.")
+    
+    try:
+        await bot.send_message(user_id, "⚠️ **Notice:** Your premium subscription has been cancelled by an Admin.")
+    except: pass
 
 # --- 5. INFO & STATS ---
 
@@ -189,7 +227,7 @@ async def bot_stats(event):
         async with db.execute('SELECT COUNT(*) FROM users') as c1: u_count = (await c1.fetchone())[0]
         async with db.execute('SELECT COUNT(*) FROM subscriptions WHERE status="active"') as c2: s_count = (await c2.fetchone())[0]
     await event.reply(f"📊 **Stats:** Users: {u_count} | Active: {s_count} | Live: {len(ACTIVE_CLIENTS)}")
-    
+
 # --- 9. GET DATABASE: /getdb ---
 @bot.on(events.NewMessage(pattern='/getdb'))
 async def get_db_file(event):
@@ -229,6 +267,22 @@ async def broadcast_handler(event):
         try: await bot.send_message(row[0], msg); done += 1; await asyncio.sleep(0.3)
         except: failed += 1
     await status_msg.edit(f"📣 Broadcast Finished!\n✅ Sent: {done} | ❌ Failed: {failed}")
+
+@bot.on(events.NewMessage(pattern=r'/toggleplan (\w+) (on|off)'))
+async def toggle_plan_handler(event):
+    p = await get_sudo_powers(event.sender_id)
+    if not p or not p['can_pay']: return
+
+    plan_key = event.pattern_match.group(1).lower()
+    status = event.pattern_match.group(2).lower()
+    
+    await set_plan_status(plan_key, status)
+    
+    emoji = "✅ ENABLED" if status == "on" else "🚫 DISABLED"
+    await event.reply(f"⚙️ **Plan Manager:**\nPlan `{plan_key.upper()}` is now {emoji}.")
+    
+    if LOG_GROUP:
+        await bot.send_message(LOG_GROUP, f"🛠️ **Admin Action:** Plan `{plan_key}` was toggled `{status}` by `{event.sender_id}`")
 
 @bot.on(events.NewMessage(pattern=r'/reset_trial (\d+)'))
 async def reset_trial_handler(event):
@@ -303,7 +357,8 @@ async def sudo_help(event):
     # --- FINANCIAL & SYSTEM TOOLS ---
     if is_owner or (powers and powers[1] == 1): # can_pay power
         help_msg += "💳 **Management & Billing:**\n"
-        help_msg += "• `/approve <ID> <D> <H> <M>` - Add manual time\n"
+        help_msg += "• `/approve <ID> <Plan> <Days>` - Approve any plan\n"
+        help_msg += "  👉 _Ex: /approve 123 Ultra_Empire 30_\n"
         help_msg += "  👉 _Ex: /approve 123 30 0 0_ (Add 30 days)\n"
         help_msg += "  👉 _Ex: /approve 123 0 2 30_ (Add 2hr 30m)\n"
         help_msg += "• `/cancel <ID>` - Terminate premium plan\n"
@@ -312,5 +367,7 @@ async def sudo_help(event):
         help_msg += "• `/info <ID>` - Check phone, trial & expiry info\n"
         help_msg += "• `/stats` - View global bot statistics\n"
         help_msg += "• `/getdb` - Download the SQLite database file\n"
+        help_msg += "• `/toggleplan <key> <on/off>` - Enable/Disable a plan\n"
+        help_msg += "  👉 _Ex: /toggleplan u_std_15 off_\n"
 
     await event.reply(help_msg)
