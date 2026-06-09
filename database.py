@@ -285,27 +285,33 @@ async def get_maintenance():
 
 # --- USER PROFILE DATA (For /me Command) ---
 
+# --- USER PROFILE DATA (Updated: No Phone) ---
+
 async def get_user_profile(user_id):
-    """Returns Name, ID, Phone and Plan details"""
+    """Returns Plan and Time details for /me command"""
     async with aiosqlite.connect(DB_FILE) as db:
-        # Fetch user info
-        async with db.execute('SELECT phone FROM users WHERE user_id = ?', (user_id,)) as c:
-            u_row = await c.fetchone()
-            phone = u_row[0] if u_row else "Not Linked"
-        
-        # Fetch subscription info
+        # Fetch subscription info from the plan table
         async with db.execute('SELECT plan, expiry_date, status FROM subscriptions WHERE user_id = ?', (user_id,)) as c:
             s_row = await c.fetchone()
+            
             if s_row and s_row[2] == "active":
                 plan = s_row[0]
                 expiry = datetime.datetime.fromisoformat(s_row[1])
                 time_left = expiry - datetime.datetime.now()
-                rem = str(time_left).split('.')[0] if time_left.total_seconds() > 0 else "Expired"
+                
+                # Format time left into readable string
+                if time_left.total_seconds() > 0:
+                    days = time_left.days
+                    hours, remainder = divmod(time_left.seconds, 3600)
+                    minutes, _ = divmod(remainder, 60)
+                    rem_str = f"{days}d {hours}h {minutes}m"
+                else:
+                    rem_str = "Expired"
             else:
                 plan = "Free / No Plan"
-                rem = "N/A"
+                rem_str = "N/A"
         
-        return {"phone": phone, "plan": plan, "time_left": rem}
+        return {"plan": plan, "time_left": rem_str}
 
 async def get_user_plan_type(user_id):
     """Returns 'Empire' or 'Standard' for internal engine check"""
