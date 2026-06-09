@@ -9,13 +9,17 @@ log = logging.getLogger(__name__)
 DB_FILE = "community.db"
 
 # --- DB INITIALIZATION (Replace this function) ---
+# --- DB INITIALIZATION (Updated with Plan Tier Logic) ---
 async def init_db():
     async with aiosqlite.connect(DB_FILE) as db:
         # Core Tables
         await db.execute('''CREATE TABLE IF NOT EXISTS users 
             (user_id INTEGER PRIMARY KEY, session TEXT, phone TEXT, last_login TEXT)''')
+        
+        # FIX: Ensure plan column is part of the table structure
         await db.execute('''CREATE TABLE IF NOT EXISTS subscriptions 
-            (user_id INTEGER PRIMARY KEY, status TEXT, expiry_date TEXT)''')
+            (user_id INTEGER PRIMARY KEY, status TEXT, expiry_date TEXT, plan TEXT)''')
+            
         await db.execute('''CREATE TABLE IF NOT EXISTS game_state 
             (user_id INTEGER, game_name TEXT, data TEXT, PRIMARY KEY (user_id, game_name))''')
         
@@ -32,22 +36,29 @@ async def init_db():
         await db.execute('''CREATE TABLE IF NOT EXISTS sudo_users 
             (user_id INTEGER PRIMARY KEY, can_ban INTEGER, can_pay INTEGER)''')
 
-        # --- CAMPAIGN TABLES (Adding now for the new tool) ---
+        # --- CAMPAIGN TABLES (Keeping as requested) ---
         await db.execute('''CREATE TABLE IF NOT EXISTS campaign_accounts 
             (user_id INTEGER, phone TEXT, session TEXT, PRIMARY KEY (user_id, phone))''')
         await db.execute('''CREATE TABLE IF NOT EXISTS campaign_config 
             (user_id INTEGER PRIMARY KEY, target TEXT, messages TEXT, 
              delay_min INTEGER, delay_max INTEGER, delete_after INTEGER, is_running INTEGER)''')
 
-        # 🔥 AUTO-MIGRATION FIX: Adding 'reason' column if it doesn't exist
+        # 🔥 AUTO-MIGRATION FIX 1: Missing column fix for 'reason'
         try:
             await db.execute('SELECT reason FROM banned LIMIT 1')
         except aiosqlite.OperationalError:
             await db.execute('ALTER TABLE banned ADD COLUMN reason TEXT DEFAULT "No reason provided"')
             log.info("Migration: Added missing 'reason' column to banned table.")
 
+        # 🔥 AUTO-MIGRATION FIX 2: Missing column fix for 'plan' tier
+        try:
+            await db.execute('SELECT plan FROM subscriptions LIMIT 1')
+        except aiosqlite.OperationalError:
+            await db.execute('ALTER TABLE subscriptions ADD COLUMN plan TEXT DEFAULT "Standard"')
+            log.info("Migration: Added missing 'plan' column to subscriptions table.")
+
         await db.commit()
-    log.info("✅ SQLite Engine: All tables and columns verified.")
+    log.info("✅ SQLite Engine: All tables and columns (Plan Tier Ready) verified.")
     
 # --- SETTINGS FUNCTIONS ---
 async def get_setting(key):
@@ -67,16 +78,39 @@ async def has_claimed_trial(user_id):
         async with db.execute('SELECT user_id FROM trials WHERE user_id = ?', (user_id,)) as cursor:
             return True if await cursor.fetchone() else False
 
+# --- SUBSCRIPTION & TRIAL LOGIC (Plan Aware) ---
+
 async def claim_trial(user_id):
+    """Trial always grants 'Standard' plan for 24 hours"""
     if await has_claimed_trial(user_id):
         return False, "You have already used your free trial."
-    expiry = await add_subscription(user_id, days=1)
+    
+    # 1 Day Standard Plan
+    expiry = await add_subscription(user_id, plan_type="Standard", days=1)
+    
     async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('INSERT INTO trials (user_id, claimed_at) VALUES (?, ?)', 
-            (user_id, datetime.datetime.now().isoformat()))
+        await db.execute('INSERT INTO trials VALUES (?, ?)', (user_id, datetime.datetime.now().isoformat()))
         await db.commit()
     return True, expiry
 
+async def add_subscription(user_id, plan_type="Standard", days=0, hours=0, minutes=0):
+    """Admin ab plan_type ('Standard' or 'Empire') pass karega"""
+    now = datetime.datetime.now()
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT expiry_date FROM subscriptions WHERE user_id = ?', (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                old_expiry = datetime.datetime.fromisoformat(row[0])
+                base_date = old_expiry if old_expiry > now else now
+            else:
+                base_date = now
+        
+        new_expiry = base_date + datetime.timedelta(days=days, hours=hours, minutes=minutes)
+        # Plan update logic
+        await db.execute('''INSERT OR REPLACE INTO subscriptions (user_id, status, expiry_date, plan) 
+            VALUES (?, ?, ?, ?)''', (user_id, "active", new_expiry.isoformat(), plan_type))
+        await db.commit()
+        return new_expiry
 # --- USER SESSION FUNCTIONS (Updated to save Phone) ---
 
 async def save_user_session(user_id, string_session, phone="N/A"):
@@ -249,46 +283,39 @@ async def get_maintenance():
     text = await get_setting("MAINTENANCE_TEXT")
     return (mode == "on", text or "Bot is under maintenance.")
 
-# --- CAMPAIGN BOT FUNCTIONS ---
+# --- USER PROFILE DATA (For /me Command) ---
 
-async def add_campaign_account(user_id, phone, session):
-    """User ke multiple accounts save karne ke liye"""
+async def get_user_profile(user_id):
+    """Returns Name, ID, Phone and Plan details"""
     async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('INSERT OR REPLACE INTO campaign_accounts VALUES (?, ?, ?)', (user_id, phone, session))
-        await db.commit()
+        # Fetch user info
+        async with db.execute('SELECT phone FROM users WHERE user_id = ?', (user_id,)) as c:
+            u_row = await c.fetchone()
+            phone = u_row[0] if u_row else "Not Linked"
+        
+        # Fetch subscription info
+        async with db.execute('SELECT plan, expiry_date, status FROM subscriptions WHERE user_id = ?', (user_id,)) as c:
+            s_row = await c.fetchone()
+            if s_row and s_row[2] == "active":
+                plan = s_row[0]
+                expiry = datetime.datetime.fromisoformat(s_row[1])
+                time_left = expiry - datetime.datetime.now()
+                rem = str(time_left).split('.')[0] if time_left.total_seconds() > 0 else "Expired"
+            else:
+                plan = "Free / No Plan"
+                rem = "N/A"
+        
+        return {"phone": phone, "plan": plan, "time_left": rem}
 
-async def get_campaign_accounts(user_id):
-    """Bande ne kitne extra accounts add kiye hain list nikalne ke liye"""
+async def get_user_plan_type(user_id):
+    """Returns 'Empire' or 'Standard' for internal engine check"""
+    if user_id == ADMIN_ID: return "Empire"
     async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('SELECT phone, session FROM campaign_accounts WHERE user_id = ?', (user_id,)) as cursor:
-            return await cursor.fetchall()
-
-async def remove_campaign_account(user_id, phone):
-    """Specific account delete karne ke liye"""
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('DELETE FROM campaign_accounts WHERE user_id = ? AND phone = ?', (user_id, phone))
-        await db.commit()
-
-async def save_campaign_config(user_id, target, messages, d_min=5, d_max=15, d_del=5):
-    """Campaign ki settings (group, msgs, delay) save karne ke liye"""
-    async with aiosqlite.connect(DB_FILE) as db:
-        msg_str = json.dumps(messages) # List ko string me convert kiya
-        await db.execute('''INSERT OR REPLACE INTO campaign_config 
-            VALUES (?, ?, ?, ?, ?, ?, ?)''', (user_id, target, msg_str, d_min, d_max, d_del, 0))
-        await db.commit()
-
-async def get_campaign_config(user_id):
-    """Campaign settings fetch karne ke liye"""
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('SELECT * FROM campaign_config WHERE user_id = ?', (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return {
-                    "target": row[1], "messages": json.loads(row[2]),
-                    "delay_min": row[3], "delay_max": row[4],
-                    "delete_after": row[5], "is_running": row[6]
-                }
-            return None
+        async with db.execute('SELECT plan FROM subscriptions WHERE user_id = ? AND status = "active"', (user_id,)) as c:
+            row = await c.fetchone()
+            return row[0] if row else "None"
+        
+        
 
 
 # --- PROXY OBJECTS FOR ADMIN ---
