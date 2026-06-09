@@ -72,6 +72,19 @@ async def set_setting(key, value):
         await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (key, value))
         await db.commit()
 
+# --- PLAN MANAGEMENT LOGIC ---
+
+async def set_plan_status(plan_key, status):
+    """Plan ko enable/disable karne ke liye. status: 'on'/'off'"""
+    # plan_key examples: standard_15, ultra_emp_30, etc.
+    await set_setting(f"STATUS_{plan_key.upper()}", status)
+
+async def is_plan_available(plan_key):
+    """Check karega ki plan chalu hai ya band"""
+    # Default 'on' rahega agar setting nahi mili
+    res = await get_setting(f"STATUS_{plan_key.upper()}")
+    return res != "off"
+
 # --- TRIAL LOGIC ---
 async def has_claimed_trial(user_id):
     async with aiosqlite.connect(DB_FILE) as db:
@@ -94,23 +107,31 @@ async def claim_trial(user_id):
     return True, expiry
 
 async def add_subscription(user_id, plan_type="Standard", days=0, hours=0, minutes=0):
-    """Admin ab plan_type ('Standard' or 'Empire') pass karega"""
+    """
+    Admin ab plan_type pass karega: 
+    'Standard', 'Empire', 'Ultra Standard', ya 'Ultra Empire'
+    """
     now = datetime.datetime.now()
     async with aiosqlite.connect(DB_FILE) as db:
         async with db.execute('SELECT expiry_date FROM subscriptions WHERE user_id = ?', (user_id,)) as cursor:
             row = await cursor.fetchone()
             if row:
-                old_expiry = datetime.datetime.fromisoformat(row[0])
-                base_date = old_expiry if old_expiry > now else now
+                try:
+                    old_expiry = datetime.datetime.fromisoformat(row[0])
+                    base_date = old_expiry if old_expiry > now else now
+                except:
+                    base_date = now
             else:
                 base_date = now
         
         new_expiry = base_date + datetime.timedelta(days=days, hours=hours, minutes=minutes)
-        # Plan update logic
+        
+        # INSERT OR REPLACE logic for the plan
         await db.execute('''INSERT OR REPLACE INTO subscriptions (user_id, status, expiry_date, plan) 
             VALUES (?, ?, ?, ?)''', (user_id, "active", new_expiry.isoformat(), plan_type))
         await db.commit()
         return new_expiry
+        
 # --- USER SESSION FUNCTIONS (Updated to save Phone) ---
 
 async def save_user_session(user_id, string_session, phone="N/A"):
