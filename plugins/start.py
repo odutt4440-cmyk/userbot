@@ -51,6 +51,7 @@ async def send_start_menu(event, edit=False):
     buttons = [
         [Button.inline("⚙️ Explore Modules", data="modules_main")],
         [Button.inline("🎁 Claim 1-Day Trial", data="claim_trial_btn")],
+        [Button.inline("📢 Support & Feedback", data="support_main")], # <--- Naya Button
         [Button.inline("📜 Rules", data="rules"), Button.inline("👨‍💻 Developer", data="dev_info")],
         [Button.inline("🔑 Generate String", data="gen_string_internal")] 
     ]
@@ -263,3 +264,5 @@ async def callback_handler(event):
         await event.answer("1. One trial per user.\n2. No spamming commands.\n3. Respect community", alert=True)
     elif data == "dev_info":
         await event.answer("Developed by: @YourUsername\nSystem: SQLite Fast Engine v2.5", alert=True)
+        
+    
