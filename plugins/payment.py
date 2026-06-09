@@ -2,117 +2,155 @@ import asyncio
 from bot_instance import bot 
 from telethon import events, Button
 from config import ADMIN_ID, LOG_GROUP, SUDO_USERS
-from database import add_subscription, get_sudo_info # Added get_sudo_info
+from database import add_subscription, get_sudo_info
 
-# Tracking users currently in the payment process
+# Tracking users: {user_id: {"plan": str, "days": int, "price": int}}
 WAITING_FOR_PAYMENT = {}
 
 # --- HELPER: CHECK PAYMENT POWER ---
 async def can_user_approve(user_id):
-    if user_id == ADMIN_ID: return True # Owner can always approve
-    # Check powers from SQLite sudo_users table
+    if user_id == ADMIN_ID: return True
     info = await get_sudo_info(user_id)
-    if info and info[1] == 1: # Index 1 is 'can_pay' column
+    if info and info[1] == 1: # can_pay column
         return True
     return False
 
-# --- 1. WHEN USER CLICKS 'PAY ₹10' ---
+# --- 1. PLAN SELECTION MENU ---
 @bot.on(events.CallbackQuery(data="pay_now"))
-async def pay_now(event):
+async def pay_menu(event):
+    text = (
+        "💎 **Empire Userbot Premium Plans**\n\n"
+        "✨ **Standard Plan (One module at a time):**\n"
+        "• 15 Days Access ➔ **₹10**\n"
+        "• 30 Days Access ➔ **₹30**\n\n"
+        "🚀 **Empire Plan (All modules simultaneously):**\n"
+        "• 15 Days Access ➔ **₹15**\n"
+        "• 30 Days Access ➔ **₹35**\n\n"
+        "👇 **Select your preferred plan below:**"
+    )
+    buttons = [
+        [Button.inline("💳 Standard (15d) - ₹10", data="plan_std_15"), Button.inline("💳 Standard (30d) - ₹30", data="plan_std_30")],
+        [Button.inline("👑 Empire (15d) - ₹15", data="plan_emp_15"), Button.inline("👑 Empire (30d) - ₹35", data="plan_emp_30")],
+        [Button.inline("🔙 Back to Menu", data="start_back")]
+    ]
+    await event.edit(text, buttons=buttons)
+
+# --- 2. SHOW PAYMENT INFO ---
+@bot.on(events.CallbackQuery(pattern=r"plan_(std|emp)_(\d+)"))
+async def show_payment_info(event):
     user_id = event.sender_id
-    user = await event.get_sender()
-    WAITING_FOR_PAYMENT[user_id] = True
+    plan_code = event.pattern_match.group(1) # std or emp
+    days = int(event.pattern_match.group(2)) # 15 or 30
     
+    plan_name = "STANDARD" if plan_code == "std" else "EMPIRE"
+    # Price logic
+    if plan_code == "std":
+        price = 10 if days == 15 else 30
+    else:
+        price = 15 if days == 15 else 35
+        
+    # Save user state for verification
+    WAITING_FOR_PAYMENT[user_id] = {"plan": plan_name, "days": days, "price": price}
+    
+    # Log Intent
     if LOG_GROUP:
         try:
-            name = user.first_name
-            await bot.send_message(
-                LOG_GROUP, 
-                f"💳 **Payment Intent:** User `{name}` ({user_id}) is viewing the payment instructions."
-            )
+            user = await event.get_sender()
+            await bot.send_message(LOG_GROUP, f"💸 **Intent:** `{user.first_name}` is buying **{plan_name} ({days} Days)** for ₹{price}.")
         except: pass
 
     pay_text = (
-        "💳 **Premium Subscription (₹10/Month)**\n\n"
-        "To keep your userbot running 24/7 on our high-speed servers, "
-        "please complete the payment below:\n\n"
-        "🎯 **UPI ID:** `yourupi@upi` (Tap to copy)\n"
-        "💰 **Amount:** ₹10\n\n"
-        "✅ **After Payment:** Send the **Screenshot** of the transaction here in this chat.\n\n"
-        "🛡️ Our support team will verify and activate your account shortly."
+        f"🎯 **Plan:** {plan_name} Mode\n"
+        f"⏳ **Duration:** {days} Days\n"
+        f"💰 **Amount:** ₹{price}\n\n"
+        "Transfer the amount to the UPI ID below:\n"
+        "👉 `yourupi@upi` (Tap to copy)\n\n"
+        "✅ **IMPORTANT:** Send the **Screenshot** here after payment.\n"
+        "🛡️ Our team will activate your account within 1-12 hours."
     )
-    
-    await event.edit(pay_text, buttons=[Button.inline("❌ Cancel", data="start_back")])
+    await event.edit(pay_text, buttons=[Button.inline("❌ Cancel / Change Plan", data="pay_now")])
 
-# --- 2. WHEN USER SENDS SCREENSHOT ---
+# --- 3. RECEIVE SCREENSHOT ---
 @bot.on(events.NewMessage)
 async def receive_screenshot(event):
     user_id = event.sender_id
     
     if user_id in WAITING_FOR_PAYMENT and event.photo:
+        data = WAITING_FOR_PAYMENT[user_id]
         user = await event.get_sender()
+        
         await event.reply(
-            "✅ **Screenshot Received!**\n"
-            "Your payment has been sent to our verification group. "
-            "You will receive a notification here once it is approved."
+            f"✅ **Screenshot Received!**\n"
+            f"Plan: `{data['plan']} ({data['days']} Days)`\n"
+            "Admins are verifying your receipt. Please wait."
         )
         
         admin_text = (
-            "🔔 **NEW PAYMENT VERIFICATION**\n\n"
-            f"👤 **User:** {user.first_name}\n"
-            f"🆔 **User ID:** `{user_id}`\n"
-            f"🔗 **Username:** @{user.username if user.username else 'N/A'}\n\n"
-            "**Action Required:** Check the screenshot and approve if valid. 👇"
+            "🔔 **NEW PAYMENT REQUEST**\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 **User:** {user.first_name} (@{user.username if user.username else 'N/A'})\n"
+            f"🆔 **ID:** `{user_id}`\n"
+            f"💎 **Plan:** `{data['plan']}`\n"
+            f"⏳ **Days:** `{data['days']}`\n"
+            f"💰 **Amount:** `₹{data['price']}`\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            "Verify the payment and approve below: 👇"
         )
         
+        # Approve data format: appr_PLAN_DAYS_USERID
+        p_code = "std" if data['plan'] == "STANDARD" else "emp"
+        
         if LOG_GROUP:
-            try:
-                await bot.send_file(
-                    LOG_GROUP,
-                    event.photo,
-                    caption=admin_text,
-                    buttons=[
-                        [Button.inline("✅ Approve", data=f"approve_{user_id}")],
-                        [Button.inline("❌ Reject", data=f"reject_{user_id}")]
-                    ]
-                )
-            except Exception as e:
-                await bot.send_file(ADMIN_ID, event.photo, caption=admin_text + f"\n\n*(Error: {e})*")
+            await bot.send_file(
+                LOG_GROUP,
+                event.photo,
+                caption=admin_text,
+                buttons=[
+                    [Button.inline(f"✅ Approve {data['plan']} ({data['days']}d)", data=f"appr_{p_code}_{data['days']}_{user_id}")],
+                    [Button.inline("❌ Reject", data=f"reject_{user_id}")]
+                ]
+            )
         
         del WAITING_FOR_PAYMENT[user_id]
 
-# --- 3. SUDO APPROVAL LOGIC (Power Checked) ---
-@bot.on(events.CallbackQuery(pattern=r"approve_"))
+# --- 4. SUDO APPROVAL LOGIC ---
+@bot.on(events.CallbackQuery(pattern=r"appr_(std|emp)_(\d+)_(\d+)"))
 async def approve_payment(event):
-    # Permission Check: Does this sudo have 'can_pay' power?
     if not await can_user_approve(event.sender_id):
         await event.answer("⚠️ Access Denied: You don't have 'can_pay' permission.", alert=True)
         return
 
-    target_user_id = int(event.data.decode("utf-8").replace("approve_", ""))
+    # Extract Data: appr_std_15_12345
+    parts = event.data.decode("utf-8").split("_")
+    plan_code = parts[1]
+    days = int(parts[2])
+    target_user_id = int(parts[3])
+    
+    plan_type = "Standard" if plan_code == "std" else "Empire"
     admin_name = event.sender.first_name
     
-    # Update Database using SQLite (30 Days Default)
-    expiry = await add_subscription(target_user_id, days=30)
+    # Update Database with correct Days and Plan Type
+    expiry = await add_subscription(target_user_id, plan_type=plan_type, days=days)
     
     await event.edit(
-        f"✅ **Payment Approved**\n\n"
+        f"✅ **{plan_type} ({days}d) Activated**\n"
         f"🆔 **User ID:** `{target_user_id}`\n"
         f"👮 **Admin:** {admin_name}\n"
-        f"📅 **Expiry:** `{expiry.strftime('%Y-%m-%d %H:%M:%S')}`\n"
-        f"✨ Access granted for 30 days."
+        f"📅 **Expiry:** `{expiry.strftime('%Y-%m-%d %H:%M')}`"
     )
     
     try:
         success_msg = (
-            "🎉 **Subscription Activated!**\n\n"
-            "Your premium payment has been approved. You now have **30 days** of full access.\n"
-            "Go to the Modules section and fire up your userbot! 🚀"
+            f"🎉 **Premium Activated!**\n\n"
+            f"**Plan:** {plan_type}\n"
+            f"**Duration:** {days} Days\n\n"
+            f"{'⚠️ Standard: 1 module at a time.' if plan_code == 'std' else '🚀 Empire: All modules simultaneous.'}\n\n"
+            "Go to Modules and start your bot! 🚀"
         )
-        await bot.send_message(target_user_id, success_msg, buttons=[Button.inline("⚙️ Open Modules", data="modules_main")])
+        await bot.send_message(target_user_id, success_msg, buttons=[Button.inline("⚙️ Modules", data="modules_main")])
     except: pass
 
-# --- 4. SUDO REJECT LOGIC (Power Checked) ---
+# --- 5. SUDO REJECT LOGIC ---
 @bot.on(events.CallbackQuery(pattern=r"reject_"))
 async def reject_payment(event):
     if not await can_user_approve(event.sender_id):
@@ -121,20 +159,7 @@ async def reject_payment(event):
     
     target_user_id = int(event.data.decode("utf-8").replace("reject_", ""))
     admin_name = event.sender.first_name
-
-    await event.edit(
-        f"❌ **Payment Rejected**\n\n"
-        f"🆔 **User ID:** `{target_user_id}`\n"
-        f"👮 **Admin:** {admin_name}\n"
-        f"Status: Transaction declined."
-    )
-    
+    await event.edit(f"❌ **Payment Rejected**\n🆔 User: `{target_user_id}`\n👮 Admin: {admin_name}")
     try:
-        reject_msg = (
-            "⚠️ **Payment Rejected**\n\n"
-            "Your payment screenshot was rejected by our admins. "
-            "Please ensure you send a valid transaction receipt.\n\n"
-            "If you think this is a mistake, contact our support."
-        )
-        await bot.send_message(target_user_id, reject_msg)
+        await bot.send_message(target_user_id, "⚠️ **Rejected:** Your screenshot was invalid. Please try again.")
     except: pass
