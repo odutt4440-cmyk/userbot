@@ -189,7 +189,32 @@ async def bot_stats(event):
         async with db.execute('SELECT COUNT(*) FROM users') as c1: u_count = (await c1.fetchone())[0]
         async with db.execute('SELECT COUNT(*) FROM subscriptions WHERE status="active"') as c2: s_count = (await c2.fetchone())[0]
     await event.reply(f"📊 **Stats:** Users: {u_count} | Active: {s_count} | Live: {len(ACTIVE_CLIENTS)}")
-
+    
+# --- 9. GET DATABASE: /getdb ---
+@bot.on(events.NewMessage(pattern='/getdb'))
+async def get_db_file(event):
+    # Sirf staff hi DB mangwa sakte hain
+    if not await is_staff(event.sender_id): return
+    
+    status_msg = await event.reply("⏳ **Preparing database file...**")
+    try:
+        if os.path.exists(DB_FILE):
+            # Live DB ko copy karke bhejenge taaki 'Locked' error na aaye
+            import shutil
+            temp_db = "temp_backup.db"
+            shutil.copy(DB_FILE, temp_db)
+            
+            await bot.send_file(
+                event.chat_id, 
+                temp_db, 
+                caption=f"📁 **Empire Community Database**\n📅 **Exported on:** `{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`"
+            )
+            os.remove(temp_db)
+            await status_msg.delete()
+        else:
+            await status_msg.edit("❌ **Error:** Database file not found.")
+    except Exception as e:
+        await status_msg.edit(f"❌ **Failed to export DB:** `{e}`")
 # --- 6. OWNER ONLY ---
 
 @bot.on(events.NewMessage(pattern=r'/broadcast (.*)'))
@@ -286,5 +311,6 @@ async def sudo_help(event):
         help_msg += "• `/active` - List currently running userbots\n"
         help_msg += "• `/info <ID>` - Check phone, trial & expiry info\n"
         help_msg += "• `/stats` - View global bot statistics\n"
+        help_msg += "• `/getdb` - Download the SQLite database file\n"
 
     await event.reply(help_msg)
