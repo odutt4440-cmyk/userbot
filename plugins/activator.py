@@ -97,3 +97,40 @@ async def restart_existing(event):
     if not event.is_private: return
     module_name = event.data.decode("utf-8").replace("start_ub_", "")
     await activate_module(event)
+    
+
+# --- 5. ACTIVATE ALL MODULES (Empire Exclusive) ---
+@bot.on(events.CallbackQuery(data="activate_all"))
+async def activate_all_handler(event):
+    if not event.is_private: return
+    if not await global_security_check(event): return
+
+    from database import get_user_plan_type
+    user_id = event.sender_id
+    plan = await get_user_plan_type(user_id)
+
+    # 🛡️ Step 1: Check if User is Empire or Admin
+    if plan != "Empire" and user_id != ADMIN_ID:
+        return await event.answer(
+            "❌ Access Denied: This button is only for Empire Plan users.\n\n"
+            "Kindly upgrade your plan to 'Empire' to run all modules at once!", 
+            alert=True
+        )
+
+    # 🚀 Step 2: Activate everything if plan is correct
+    await event.edit("⏳ **Initializing Empire Mode...**\nStarting all solvers and tools on your account.")
+
+    # Hum 'Empire' trigger bhejenge jo engine ko bolega ki saare handlers load kar do
+    result_message = await SessionManager.start_userbot(user_id, "All Modules")
+
+    if "Activated" in result_message:
+        buttons = [[Button.inline("🛑 Stop All Sessions", data="stop_all_modules")]]
+    else:
+        buttons = [[Button.inline("🔙 Back", data="games_ub")]]
+
+    await event.edit(result_message, buttons=buttons)
+
+# Callback to stop all
+@bot.on(events.CallbackQuery(data="stop_all_modules"))
+async def stop_all_callback(event):
+    await stop_module(event) 
