@@ -1,10 +1,23 @@
 import asyncio
+import re
 from bot_instance import bot 
 from telethon import events, Button
 from config import ADMIN_ID, LOG_GROUP, SUDO_USERS
-from database import add_subscription, get_sudo_info
+from database import add_subscription, get_sudo_info, global_security_check
 
-# Tracking users: {user_id: {"plan": str, "days": int, "price": int}}
+# Mapping for all 8 plans: Price, Full Name, and Days
+PLAN_MAP = {
+    "std_15": {"name": "Standard", "price": 10, "days": 15},
+    "std_30": {"name": "Standard", "price": 30, "days": 30},
+    "emp_15": {"name": "Empire", "price": 15, "days": 15},
+    "emp_30": {"name": "Empire", "price": 35, "days": 30},
+    "u_std_15": {"name": "Ultra Standard", "price": 50, "days": 15},
+    "u_std_30": {"name": "Ultra Standard", "price": 95, "days": 30},
+    "u_emp_15": {"name": "Ultra Empire", "price": 55, "days": 15},
+    "u_emp_30": {"name": "Ultra Empire", "price": 100, "days": 30},
+}
+
+# Tracking users: {user_id: plan_key}
 WAITING_FOR_PAYMENT = {}
 
 # --- HELPER: CHECK PAYMENT POWER ---
@@ -15,142 +28,131 @@ async def can_user_approve(user_id):
         return True
     return False
 
-# --- 1. PLAN SELECTION MENU ---
-@bot.on(events.CallbackQuery(data="pay_now"))
-async def pay_menu(event):
-    text = (
-        "💎 **Empire Userbot Premium Plans**\n\n"
-        "✨ **Standard Plan (One module at a time):**\n"
-        "• 15 Days Access ➔ **₹10**\n"
-        "• 30 Days Access ➔ **₹30**\n\n"
-        "🚀 **Empire Plan (All modules simultaneously):**\n"
-        "• 15 Days Access ➔ **₹15**\n"
-        "• 30 Days Access ➔ **₹35**\n\n"
-        "👇 **Select your preferred plan below:**"
-    )
-    buttons = [
-        [Button.inline("💳 Standard (15d) - ₹10", data="plan_std_15"), Button.inline("💳 Standard (30d) - ₹30", data="plan_std_30")],
-        [Button.inline("👑 Empire (15d) - ₹15", data="plan_emp_15"), Button.inline("👑 Empire (30d) - ₹35", data="plan_emp_30")],
-        [Button.inline("🔙 Back to Menu", data="start_back")]
-    ]
-    await event.edit(text, buttons=buttons)
-
-# --- 2. SHOW PAYMENT INFO ---
-@bot.on(events.CallbackQuery(pattern=r"plan_(std|emp)_(\d+)"))
-async def show_payment_info(event):
+# --- 1. SHOW PAYMENT INFO (Universal Function) ---
+async def show_payment_info(event, plan_key):
     user_id = event.sender_id
-    plan_code = event.pattern_match.group(1) # std or emp
-    days = int(event.pattern_match.group(2)) # 15 or 30
+    plan = PLAN_MAP.get(plan_key)
+    if not plan: return
+
+    # Save state
+    WAITING_FOR_PAYMENT[user_id] = plan_key
     
-    plan_name = "STANDARD" if plan_code == "std" else "EMPIRE"
-    # Price logic
-    if plan_code == "std":
-        price = 10 if days == 15 else 30
-    else:
-        price = 15 if days == 15 else 35
-        
-    # Save user state for verification
-    WAITING_FOR_PAYMENT[user_id] = {"plan": plan_name, "days": days, "price": price}
-    
-    # Log Intent
+    # Log Intent to Admin GC
     if LOG_GROUP:
         try:
             user = await event.get_sender()
-            await bot.send_message(LOG_GROUP, f"💸 **Intent:** `{user.first_name}` is buying **{plan_name} ({days} Days)** for ₹{price}.")
+            await bot.send_message(LOG_GROUP, f"💸 **Payment Intent:** `{user.first_name}` is buying **{plan['name']} ({plan['days']}d)** for ₹{plan['price']}.")
         except: pass
 
+    is_ultra = "Ultra" in plan['name']
     pay_text = (
-        f"🎯 **Plan:** {plan_name} Mode\n"
-        f"⏳ **Duration:** {days} Days\n"
-        f"💰 **Amount:** ₹{price}\n\n"
-        "Transfer the amount to the UPI ID below:\n"
-        "👉 `yourupi@upi` (Tap to copy)\n\n"
-        "✅ **IMPORTANT:** Send the **Screenshot** here after payment.\n"
-        "🛡️ Our team will activate your account within 1-12 hours."
+        f"🎯 **Selected Plan:** {plan['name']}\n"
+        f"⏳ **Duration:** {plan['days']} Days\n"
+        f"💰 **Amount:** ₹{plan['price']}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "**Payment Instructions:**\n"
+        "👉 UPI ID: `yourupi@upi` (Tap to copy)\n\n"
+        "✅ **After Payment:** Send the **Screenshot** here.\n"
+        f"{'🎁 *Note: We will provide you an Account ID after verification.*' if is_ultra else ''}\n"
+        "━━━━━━━━━━━━━━━━━━━━"
     )
     await event.edit(pay_text, buttons=[Button.inline("❌ Cancel / Change Plan", data="pay_now")])
 
-# --- 3. RECEIVE SCREENSHOT ---
+# --- 2. RECEIVE SCREENSHOT ---
 @bot.on(events.NewMessage)
 async def receive_screenshot(event):
+    if not event.is_private or not event.photo: return
     user_id = event.sender_id
     
-    if user_id in WAITING_FOR_PAYMENT and event.photo:
-        data = WAITING_FOR_PAYMENT[user_id]
+    if user_id in WAITING_FOR_PAYMENT:
+        plan_key = WAITING_FOR_PAYMENT[user_id]
+        plan = PLAN_MAP[plan_key]
         user = await event.get_sender()
         
         await event.reply(
-            f"✅ **Screenshot Received!**\n"
-            f"Plan: `{data['plan']} ({data['days']} Days)`\n"
-            "Admins are verifying your receipt. Please wait."
+            f"✅ **Screenshot Received for {plan['name']}!**\n"
+            "Admins are verifying your payment. You will be notified shortly."
         )
         
+        is_ultra = "Ultra" in plan['name']
         admin_text = (
-            "🔔 **NEW PAYMENT REQUEST**\n"
+            f"{'🔥 **ULTRA ID REQUEST** 🔥' if is_ultra else '🔔 **NEW PAYMENT REQUEST**'}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 **User:** {user.first_name} (@{user.username if user.username else 'N/A'})\n"
             f"🆔 **ID:** `{user_id}`\n"
-            f"💎 **Plan:** `{data['plan']}`\n"
-            f"⏳ **Days:** `{data['days']}`\n"
-            f"💰 **Amount:** `₹{data['price']}`\n"
+            f"💎 **Plan:** `{plan['name']}`\n"
+            f"⏳ **Days:** `{plan['days']}`\n"
+            f"💰 **Amount:** `₹{plan['price']}`\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            "Verify the payment and approve below: 👇"
+            f"{'⚠️ **ACTION:** Provide ID after approving!' if is_ultra else 'Verify and approve below:'}"
         )
         
-        # Approve data format: appr_PLAN_DAYS_USERID
-        p_code = "std" if data['plan'] == "STANDARD" else "emp"
-        
         if LOG_GROUP:
+            # Data format: appr_PLANKEY_USERID
             await bot.send_file(
                 LOG_GROUP,
                 event.photo,
                 caption=admin_text,
                 buttons=[
-                    [Button.inline(f"✅ Approve {data['plan']} ({data['days']}d)", data=f"appr_{p_code}_{data['days']}_{user_id}")],
+                    [Button.inline(f"✅ Approve {plan['days']}d", data=f"appr_{plan_key}_{user_id}")],
                     [Button.inline("❌ Reject", data=f"reject_{user_id}")]
                 ]
             )
         
         del WAITING_FOR_PAYMENT[user_id]
 
-# --- 4. SUDO APPROVAL LOGIC ---
-@bot.on(events.CallbackQuery(pattern=r"appr_(std|emp)_(\d+)_(\d+)"))
+# --- 4. SUDO APPROVAL LOGIC (Fixed for Plan & Days) ---
+@bot.on(events.CallbackQuery(pattern=r"appr_(\w+)_(\d+)"))
 async def approve_payment(event):
     if not await can_user_approve(event.sender_id):
-        await event.answer("⚠️ Access Denied: You don't have 'can_pay' permission.", alert=True)
+        await event.answer("⚠️ You don't have 'Pay' permission.", alert=True)
         return
 
-    # Extract Data: appr_std_15_12345
-    parts = event.data.decode("utf-8").split("_")
-    plan_code = parts[1]
-    days = int(parts[2])
-    target_user_id = int(parts[3])
+    # Data split: appr_u_std_15_123456
+    # Yahan parts ko dhyan se handle karenge
+    data = event.data.decode("utf-8").split("_")
+    # user_id hamesha aakhir me hoga
+    target_user_id = int(data[-1])
+    # bich me plan key hogi (jaise: std_15, u_emp_30)
+    plan_key = "_".join(data[1:-1]) 
     
-    plan_type = "Standard" if plan_code == "std" else "Empire"
+    plan_info = PLAN_MAP.get(plan_key)
+    if not plan_info:
+        return await event.answer("❌ Error: Invalid Plan Key.")
+
     admin_name = event.sender.first_name
-    
-    # Update Database with correct Days and Plan Type
-    expiry = await add_subscription(target_user_id, plan_type=plan_type, days=days)
+    plan_name = plan_info['name'] # "Standard", "Empire", etc.
+    plan_days = plan_info['days'] # 15 or 30
+
+    # 🔥 THE FIX: Database me wahi plan aur din jayenge jo select huye hain
+    from database import add_subscription
+    expiry = await add_subscription(
+        target_user_id, 
+        plan_type=plan_name, 
+        days=plan_days
+    )
     
     await event.edit(
-        f"✅ **{plan_type} ({days}d) Activated**\n"
-        f"🆔 **User ID:** `{target_user_id}`\n"
+        f"✅ **{plan_name} Activated**\n"
+        f"🆔 **User:** `{target_user_id}`\n"
+        f"⏳ **Duration:** {plan_days} Days\n"
         f"👮 **Admin:** {admin_name}\n"
         f"📅 **Expiry:** `{expiry.strftime('%Y-%m-%d %H:%M')}`"
     )
     
     try:
+        # User ko uske plan ke features samjhao
+        feature_text = "⚠️ You can run 1 module at a time." if "Standard" in plan_name else "🚀 You can run all modules together!"
         success_msg = (
-            f"🎉 **Premium Activated!**\n\n"
-            f"**Plan:** {plan_type}\n"
-            f"**Duration:** {days} Days\n\n"
-            f"{'⚠️ Standard: 1 module at a time.' if plan_code == 'std' else '🚀 Empire: All modules simultaneous.'}\n\n"
-            "Go to Modules and start your bot! 🚀"
+            f"🎉 **Premium Activated: {plan_name}**\n\n"
+            f"Access granted for **{plan_days} days**.\n"
+            f"Rule: {feature_text}\n\n"
+            "Go to /modules and start your bot now!"
         )
-        await bot.send_message(target_user_id, success_msg, buttons=[Button.inline("⚙️ Modules", data="modules_main")])
+        await bot.send_message(target_user_id, success_msg, buttons=[[Button.inline("⚙️ Open Modules", data="modules_main")]])
     except: pass
 
-# --- 5. SUDO REJECT LOGIC ---
+# --- 4. SUDO REJECT LOGIC ---
 @bot.on(events.CallbackQuery(pattern=r"reject_"))
 async def reject_payment(event):
     if not await can_user_approve(event.sender_id):
