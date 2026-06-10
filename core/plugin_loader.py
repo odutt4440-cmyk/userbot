@@ -13,7 +13,8 @@ async def load_all_modules(client):
         # --- Management Modules ---
         "modules.management.group_tools",
         "modules.management.tagger",
-        "modules.management.info_tools"
+        "modules.fun.afk",           
+        "modules.management.info_tools" 
     ]
     
     for module_path in modules_to_load:
