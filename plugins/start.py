@@ -222,18 +222,18 @@ async def games_menu(event):
     )
     
     buttons = [
+        [Button.inline("🚀 Activate All Modules (Empire Only)", data="activate_all")], # <--- Naya Button
         [Button.inline("WordSeek", data="mod_wordseek"), Button.inline("WordChain", data="mod_wordchain")],
         [Button.inline("Octopus", data="mod_octopus"), Button.inline("Wordly", data="mod_wordly")],
         [Button.inline("🔙 Back to Categories", data="modules_main")]
     ]
 
     try:
-        
         await event.delete() 
         await bot.send_message(event.chat_id, text, buttons=buttons)
     except Exception as e:
         print(f"Error in Games Menu: {e}")
-
+        
 # --- 7. TRIAL & CALLBACKS ---
 @bot.on(events.CallbackQuery(data="claim_trial_btn"))
 async def trial_handler(event):
