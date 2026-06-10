@@ -101,30 +101,40 @@ async def receive_screenshot(event):
         
         del WAITING_FOR_PAYMENT[user_id]
 
-# --- 4. SUDO APPROVAL LOGIC (Fixed for Plan & Days) ---
+# --- 4. SUDO APPROVAL LOGIC (Fixed for Plan, Days & Double-Plan Protection) ---
 @bot.on(events.CallbackQuery(pattern=r"appr_(\w+)_(\d+)"))
 async def approve_payment(event):
+    # 1. Permission Check
     if not await can_user_approve(event.sender_id):
         await event.answer("⚠️ You don't have 'Pay' permission.", alert=True)
         return
 
-    # Data split: appr_u_std_15_123456
-    # Yahan parts ko dhyan se handle karenge
+    # 2. Data Parsing
     data = event.data.decode("utf-8").split("_")
-    # user_id hamesha aakhir me hoga
-    target_user_id = int(data[-1])
-    # bich me plan key hogi (jaise: std_15, u_emp_30)
-    plan_key = "_".join(data[1:-1]) 
-    
+    target_user_id = int(data[-1]) # User ID
+    plan_key = "_".join(data[1:-1]) # Plan Key (std_15, etc.)
+
+    # 🔥 3. THE DOUBLE-PLAN PROTECTION (NEW)
+    from database import get_sub_info
+    status, _ = await get_sub_info(target_user_id)
+    if status == "Active":
+        # Agar user ka plan active hai toh admin ko alert do aur aage mat badho
+        return await event.answer(
+            "⚠️ This user already has an active premium plan!\n\n"
+            "Kindly use /cancel first to remove the current plan before approving a new one.", 
+            alert=True
+        )
+
+    # 4. Plan Verification
     plan_info = PLAN_MAP.get(plan_key)
     if not plan_info:
         return await event.answer("❌ Error: Invalid Plan Key.")
 
     admin_name = event.sender.first_name
-    plan_name = plan_info['name'] # "Standard", "Empire", etc.
-    plan_days = plan_info['days'] # 15 or 30
+    plan_name = plan_info['name'] 
+    plan_days = plan_info['days'] 
 
-    # 🔥 THE FIX: Database me wahi plan aur din jayenge jo select huye hain
+    # 5. Database Update
     from database import add_subscription
     expiry = await add_subscription(
         target_user_id, 
@@ -132,6 +142,7 @@ async def approve_payment(event):
         days=plan_days
     )
     
+    # 6. Update Admin UI
     await event.edit(
         f"✅ **{plan_name} Activated**\n"
         f"🆔 **User:** `{target_user_id}`\n"
@@ -140,9 +151,9 @@ async def approve_payment(event):
         f"📅 **Expiry:** `{expiry.strftime('%Y-%m-%d %H:%M')}`"
     )
     
+    # 7. Notify User
     try:
-        # User ko uske plan ke features samjhao
-        feature_text = "⚠️ You can run 1 module at a time." if "Standard" in plan_name else "🚀 You can run all modules together!"
+        feature_text = "⚠️ Standard: 1 module at a time." if "Standard" in plan_name else "🚀 Empire: All modules together!"
         success_msg = (
             f"🎉 **Premium Activated: {plan_name}**\n\n"
             f"Access granted for **{plan_days} days**.\n"
