@@ -147,29 +147,57 @@ async def unban_handler(event):
     await unban_user(user_id)
     await event.reply(f"✅ **User Unbanned:** `{user_id}`.")
 
-# --- 3. MANUAL APPROVE: /approve <id> <plan> <days> ---
-# Example: /approve 12345 Standard 15 0 0
+# --- 3. MANUAL APPROVE: /approve <id> <plan> <d> <h> <m> ---
 @bot.on(events.NewMessage(pattern=r'/approve (\d+) (\w+) (\d+)(?: (\d+))?(?: (\d+))?'))
 async def manual_approve(event):
-    if not await is_staff(event.sender_id): return
+    # Power check: Pay power needed
+    p = await get_sudo_powers(event.sender_id)
+    if not p or not p['can_pay']: return
     
     try:
         user_id = int(event.pattern_match.group(1))
-        # Ultra_Standard -> Ultra Standard
-        plan_name = event.pattern_match.group(2).replace("_", " ") 
+        
+        # 🔥 1. THE DOUBLE-PLAN PROTECTION
+        status, _ = await get_sub_info(user_id)
+        if status == "Active":
+            return await event.reply(
+                "❌ **Error:** This user already has an active premium plan.\n\n"
+                "Kindly use `/cancel` first to remove the current plan before re-approving."
+            )
+
+        # 2. Parsing logic
+        plan_raw = event.pattern_match.group(2).replace("_", " ") # Ultra_Standard -> Ultra Standard
         days = int(event.pattern_match.group(3))
         hours = int(event.pattern_match.group(4) or 0)
         minutes = int(event.pattern_match.group(5) or 0)
         
+        # 3. Call DB (Fixed arguments)
         from database import add_subscription
-        expiry = await add_subscription(user_id, plan_type=plan_name, days=days, hours=hours, minutes=minutes)
+        expiry = await add_subscription(
+            user_id, 
+            plan_type=plan_raw, 
+            days=days, 
+            hours=hours, 
+            minutes=minutes
+        )
         
+        time_str = f"{days}d {hours}h {minutes}m"
         await event.reply(
             f"✅ **Manual Approval Done!**\n\n"
             f"👤 **User:** `{user_id}`\n"
-            f"💎 **Plan:** {plan_name}\n"
-            f"⏳ **Added:** {days}d {hours}h {minutes}m"
+            f"💎 **Plan:** {plan_raw}\n"
+            f"⏳ **Duration:** {time_str}"
         )
+        
+        # Notify User
+        try:
+            await bot.send_message(
+                user_id, 
+                f"🎉 **Premium Activated!**\n\nAdmin has activated your **{plan_raw}** plan for **{time_str}**.",
+                buttons=[[Button.inline("⚙️ Open Modules", data="modules_main")]]
+            )
+        except: pass
+
     except Exception as e:
         await event.reply(f"❌ **Error:** `{e}`")
 
@@ -181,15 +209,14 @@ async def cancel_handler(event):
     
     user_id = int(event.pattern_match.group(1))
     
-    # 1. Database me status 'expired' karo aur date reset karo
+    # 1. Reset in Database (Expired status + Reset expiry_date)
     await cancel_subscription(user_id)
     
-    # 2. Memory se active bot session uda do
+    # 2. Kill Active Bot Session
     if user_id in ACTIVE_CLIENTS:
         await SessionManager.stop_userbot(user_id)
         
-    await event.reply(f"📉 **Plan Terminated:** User `{user_id}` access has been revoked.")
-    
+    await event.reply(f"📉 **Plan Terminated:** User `{user_id}` premium access removed.")
     try:
         await bot.send_message(user_id, "⚠️ **Notice:** Your premium subscription has been cancelled by an Admin.")
     except: pass
