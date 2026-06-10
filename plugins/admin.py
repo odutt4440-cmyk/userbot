@@ -388,3 +388,55 @@ async def sudo_help(event):
         help_msg += "  👉 _Ex: /toggleplan u_std_15 off_\n"
 
     await event.reply(help_msg)
+
+# --- 10. LIST ALL PREMIUM USERS: /active_plans ---
+@bot.on(events.NewMessage(pattern='/active_plans'))
+async def active_plans_list(event):
+    if not await is_staff(event.sender_id): return
+    
+    status_msg = await event.reply("⏳ **Scanning database for active plans...**")
+    
+    try:
+        async with aiosqlite.connect(DB_FILE) as db:
+            # Sirf unhe uthao jinka status active hai
+            query = 'SELECT user_id, plan, expiry_date FROM subscriptions WHERE status = "active"'
+            async with db.execute(query) as cursor:
+                rows = await cursor.fetchall()
+        
+        if not rows:
+            return await status_msg.edit("ℹ️ No active premium users found.")
+
+        # Ek text file taiyar karenge taaki 2000 users bhi ho toh crash na ho
+        report = "EMPIRE USERBOT - ACTIVE PLANS REPORT\n"
+        report += "="*40 + "\n\n"
+        
+        active_count = 0
+        now = datetime.datetime.now()
+
+        for r in rows:
+            uid, plan, expiry_str = r
+            expiry = datetime.datetime.fromisoformat(expiry_str)
+            
+            if expiry > now:
+                active_count += 1
+                rem = expiry - now
+                days = rem.days
+                # Format: ID | Plan | Time Left
+                report += f"👤 ID: {uid}\n💎 Plan: {plan}\n⏳ Time Left: {days}d {rem.seconds//3600}h\n"
+                report += "-"*20 + "\n"
+
+        file_name = "active_users_report.txt"
+        with open(file_name, "w", encoding="utf-8") as f:
+            f.write(report)
+
+        await bot.send_file(
+            event.chat_id,
+            file_name,
+            caption=f"📊 **Premium Report Generated**\n\n✅ **Active Users:** `{active_count}`\n📅 **Date:** `{now.strftime('%Y-%m-%d')}`"
+        )
+        
+        os.remove(file_name) # File delete kar do server se
+        await status_msg.delete()
+
+    except Exception as e:
+        await status_msg.edit(f"❌ **Failed to generate report:** `{e}`")
