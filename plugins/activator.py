@@ -1,27 +1,29 @@
 from bot_instance import bot 
 from telethon import events, Button
 from core.session_manager import SessionManager
-from config import ADMIN_ID # <--- Ye missing tha
-from database import is_subscribed, global_security_check, get_user_plan_type # <--- Ye bhi add kiya
+from config import ADMIN_ID
+from database import is_subscribed, global_security_check, get_user_plan_type
 
-# --- 1. HANDLE MODULE ACTIVATION ---
+# --- 1. HANDLE INDIVIDUAL MODULE ACTIVATION ---
+# Logic: mod_wordly -> activator triggers 'wordly'
 @bot.on(events.CallbackQuery(pattern=r"activate_"))
 async def activate_module(event):
     if not event.is_private:
-        await event.answer("⚠️ This action is only allowed in Private DM.", alert=True)
+        await event.answer("⚠️ Action allowed in Private DM only.", alert=True)
         return
     
     if not await global_security_check(event):
         return
 
     user_id = event.sender_id
+    # module_name will be: 'wordly', 'afk', 'tagger', etc.
     module_name = event.data.decode("utf-8").replace("activate_", "")
     
     if not await is_subscribed(user_id):
         await event.edit(
             "⚠️ **Premium Access Required**\n\n"
             "Your subscription has expired or is not yet active. "
-            "Please select a plan to continue.",
+            "Select a plan or claim your trial to continue.",
             buttons=[
                 [Button.inline("💳 View Premium Plans", data="pay_now")],
                 [Button.inline("🎁 Claim Free Trial", data="claim_trial_btn")],
@@ -32,22 +34,27 @@ async def activate_module(event):
 
     await event.edit(
         f"⏳ **Deploying `{module_name.upper()}`...**\n"
-        "Connecting to Telegram servers and injecting handlers."
+        "Initializing engine and injecting selective handlers."
     )
 
+    # Trigger Session Manager (Selective Loading)
     result_message = await SessionManager.start_userbot(user_id, module_name)
 
+    # UI Feedback based on Plan Lock
     if "Activated" in result_message:
-        buttons = [[Button.inline("🛑 Stop Userbot", data=f"stop_{module_name}")]]
+        # Success: Show Stop Button
+        buttons = [[Button.inline(f"🛑 Stop {module_name.upper()}", data=f"stop_{module_name}")]]
         
     elif "Access Denied" in result_message:
+        # Standard User Conflict (Running module name is shown in result_message)
         buttons = [
-            [Button.inline("🛑 Stop Current & Start This", data=f"force_start_{module_name}")],
+            [Button.inline("🛑 Stop Running & Start This", data=f"force_start_{module_name}")],
             [Button.inline("💎 Upgrade to Empire", data="pay_now")],
-            [Button.inline("🔙 Back", data="modules_main")]
+            [Button.inline("🔙 Back to Modules", data="modules_main")]
         ]
     else:
-        buttons = [[Button.inline("🔙 Back to Modules", data="modules_main")]]
+        # Other Errors (Invalid string, etc.)
+        buttons = [[Button.inline("🔙 Back", data="modules_main")]]
 
     await event.edit(result_message, buttons=buttons)
 
@@ -63,7 +70,7 @@ async def stop_module(event):
     result = await SessionManager.stop_userbot(user_id)
     
     await event.edit(
-        f"{result}\n\nYour userbot session has been terminated.",
+        f"{result}\n\nYour session has been terminated safely.",
         buttons=[
             [Button.inline("🚀 Restart Engine", data=f"activate_{module_name}")],
             [Button.inline("🔙 Main Menu", data="start_back")]
@@ -77,17 +84,19 @@ async def force_start(event):
     user_id = event.sender_id
     module_name = event.data.decode("utf-8").replace("force_start_", "")
     
+    # Engine logic handles cleanup and fresh selective start
     await SessionManager.stop_userbot(user_id)
     await activate_module(event)
 
-# --- 4. RE-STARTING ALREADY LOGGED IN USERS ---
+# --- 4. RE-STARTING FOR EXISTING SESSIONS ---
 @bot.on(events.CallbackQuery(pattern=r"start_ub_"))
 async def restart_existing(event):
     if not event.is_private: return
+    # This comes from login.py when string is already in DB
     module_name = event.data.decode("utf-8").replace("start_ub_", "")
     await activate_module(event)
 
-# --- 5. ACTIVATE ALL MODULES (Strict Empire Check) ---
+# --- 5. ACTIVATE ALL MODULES (Empire Exclusive) ---
 @bot.on(events.CallbackQuery(data="activate_all"))
 async def activate_all_handler(event):
     if not event.is_private: return
@@ -95,27 +104,28 @@ async def activate_all_handler(event):
 
     user_id = event.sender_id
     plan = await get_user_plan_type(user_id)
-    
-    # Plan name ko saaf karke check karenge (No spaces, No case issues)
     current_plan = str(plan).strip().lower()
 
-    # 🛡️ THE WALL: Agar owner nahi hai AUR plan "empire" nahi hai...
+    # 🛡️ THE WALL: OWNER & EMPIRE ONLY
     if user_id != ADMIN_ID and "empire" not in current_plan:
         return await event.answer(
-            "⚠️ Access Denied: Empire Plan Required\n\n"
-            "Standard users can only deploy one module at a time. "
-            "Please use individual buttons to start a bot.", 
+            "❌ Access Denied!\n\nStandard users can only deploy one module at a time. "
+            "Please upgrade to Empire Plan to run all bots simultaneously.", 
             alert=True
         )
 
-    # ✅ Permission Granted (Empire or Admin)
-    await event.edit("⏳ **Turbo Deploying Empire Mode...**")
+    await event.edit("⏳ **Initializing Empire Mode...**\nDeploying the entire module suite to your account.")
+
+    # Trigger ALL
     result_message = await SessionManager.start_userbot(user_id, "All Modules")
-    
-    buttons = [[Button.inline("🛑 Stop All Sessions", data="stop_all_modules")]]
+
+    if "Activated" in result_message or "Active" in result_message:
+        buttons = [[Button.inline("🛑 Stop All Sessions", data="stop_all_modules")]]
+    else:
+        buttons = [[Button.inline("🔙 Back", data="modules_main")]]
+
     await event.edit(result_message, buttons=buttons)
 
-# Callback to stop all
 @bot.on(events.CallbackQuery(data="stop_all_modules"))
 async def stop_all_callback(event):
     await stop_module(event)
