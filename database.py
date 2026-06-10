@@ -106,6 +106,8 @@ async def claim_trial(user_id):
         await db.commit()
     return True, expiry
 
+# --- SUBSCRIPTION LOGIC (Updated to accept Plan Type) ---
+
 async def add_subscription(user_id, plan_type="Standard", days=0, hours=0, minutes=0):
     """
     Admin ab plan_type pass karega: 
@@ -117,16 +119,19 @@ async def add_subscription(user_id, plan_type="Standard", days=0, hours=0, minut
             row = await cursor.fetchone()
             if row:
                 try:
+                    # Purani expiry date uthao
                     old_expiry = datetime.datetime.fromisoformat(row[0])
+                    # Agar abhi bhi valid hai toh uske aage time add karo, warna aaj se
                     base_date = old_expiry if old_expiry > now else now
                 except:
                     base_date = now
             else:
                 base_date = now
         
+        # Naya expiry time calculate karo
         new_expiry = base_date + datetime.timedelta(days=days, hours=hours, minutes=minutes)
         
-        # INSERT OR REPLACE logic for the plan
+        # 🔥 FIX: SQL query me 'plan' column include kiya hai
         await db.execute('''INSERT OR REPLACE INTO subscriptions (user_id, status, expiry_date, plan) 
             VALUES (?, ?, ?, ?)''', (user_id, "active", new_expiry.isoformat(), plan_type))
         await db.commit()
@@ -192,22 +197,6 @@ async def is_subscribed(user_id):
                 expiry = datetime.datetime.fromisoformat(row[1])
                 return expiry > datetime.datetime.now()
     return False
-
-async def add_subscription(user_id, days=0, hours=0, minutes=0):
-    now = datetime.datetime.now()
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('SELECT expiry_date FROM subscriptions WHERE user_id = ?', (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                old_expiry = datetime.datetime.fromisoformat(row[0])
-                base_date = old_expiry if old_expiry > now else now
-            else:
-                base_date = now
-        new_expiry = base_date + datetime.timedelta(days=days, hours=hours, minutes=minutes)
-        await db.execute('''INSERT OR REPLACE INTO subscriptions (user_id, status, expiry_date) 
-            VALUES (?, ?, ?)''', (user_id, "active", new_expiry.isoformat()))
-        await db.commit()
-        return new_expiry
 
 async def get_sub_info(user_id):
     async with aiosqlite.connect(DB_FILE) as db:
@@ -307,11 +296,12 @@ async def get_maintenance():
 # --- USER PROFILE DATA (For /me Command) ---
 
 # --- USER PROFILE DATA (Updated: No Phone) ---
+# --- USER PROFILE DATA (Updated: No Phone) ---
 
 async def get_user_profile(user_id):
     """Returns Plan and Time details for /me command"""
     async with aiosqlite.connect(DB_FILE) as db:
-        # Fetch subscription info from the plan table
+        # Fetch subscription info
         async with db.execute('SELECT plan, expiry_date, status FROM subscriptions WHERE user_id = ?', (user_id,)) as c:
             s_row = await c.fetchone()
             
@@ -320,7 +310,7 @@ async def get_user_profile(user_id):
                 expiry = datetime.datetime.fromisoformat(s_row[1])
                 time_left = expiry - datetime.datetime.now()
                 
-                # Format time left into readable string
+                # Format time left readable string
                 if time_left.total_seconds() > 0:
                     days = time_left.days
                     hours, remainder = divmod(time_left.seconds, 3600)
@@ -334,6 +324,7 @@ async def get_user_profile(user_id):
         
         return {"plan": plan, "time_left": rem_str}
 
+
 async def get_user_plan_type(user_id):
     """Returns 'Empire' or 'Standard' for internal engine check"""
     if user_id == ADMIN_ID: return "Empire"
@@ -342,7 +333,26 @@ async def get_user_plan_type(user_id):
             row = await c.fetchone()
             return row[0] if row else "None"
         
+# --- database.py ke aakhir mein ye function add karo ---
+
+async def global_security_check(event):
+    """Universal security check for all plugins (DM Only + Ban + Maintenance)"""
+    user_id = event.sender_id
+    
+    # 1. Maintenance Check (Admin is exempt)
+    is_maint, maint_text = await get_maintenance()
+    if is_maint and user_id != ADMIN_ID:
+        await event.reply(f"🛠️ **Bot Under Maintenance**\n\n{maint_text}")
+        return False
         
+    # 2. Ban Check
+    if await is_banned(user_id):
+        ban_info = await get_ban_info(user_id) # Returns (time, reason)
+        reason = ban_info[1] if ban_info else "No reason provided."
+        await event.reply(f"🚫 **Access Denied!**\n\nYou have been banned from using this bot.\n\n**Reason:** `{reason}`")
+        return False
+        
+    return True
 
 
 # --- PROXY OBJECTS FOR ADMIN ---
