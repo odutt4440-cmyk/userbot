@@ -42,18 +42,19 @@ async def global_security_check(event):
 async def send_start_menu(event, edit=False):
     global START_MEDIA
     welcome_text = (
-        "👋 **Welcome to Userbot Community!**\n\n"
-        "Transform your Telegram account into a powerful userbot empire. "
-        "High-speed games, automation tools, and management modules at your fingertips.\n\n"
-        "Navigate using the buttons below to get started. 👇"
+        "𝐖ᴇʟᴄᴏᴍᴇ ᴛᴏ 𝐔sᴇʀʙᴏᴛ 𝐂ᴏᴍᴍᴜɴɪᴛʏ!\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "ᴛʀᴧɴsꜰᴏʀᴍ ʏᴏᴜʀ ᴏʀᴅɪɴᴧʀʏ ᴛᴇʟᴇɢʀᴧᴍ ᴧᴄᴄᴏᴜɴᴛ ɪɴᴛᴏ ᴧ ᴘᴏᴡᴇʀꜰᴜʟ ᴜsᴇʀʙᴏᴛ ᴇᴍᴘɪʀᴇ. "
+        "ᴇxᴘᴇʀɪᴇɴᴄᴇ ʜɪɢʜ-sᴘᴇᴇᴅ ɢᴧᴍᴇs, ɴᴇxᴛ-ɢᴇɴ ᴧᴜᴛᴏᴍᴧᴛɪᴏɴ ᴛᴏᴏʟs, ᴧɴᴅ ᴧᴅᴠᴧɴᴄᴇᴅ ᴍᴧɴᴧɢᴇᴍᴇɴᴛ "
+        "ᴍᴏᴅᴜʟᴇs ʀɪɢʜᴛ ᴧᴛ ʏᴏᴜʀ ꜰɪɴɢᴇʀᴛɪᴘs. ⚡️🔥"
     )
     
     buttons = [
-        [Button.inline("⚙️ Explore Modules", data="modules_main")],
-        [Button.inline("🎁 Claim 1-Day Trial", data="claim_trial_btn")],
-        [Button.inline("📢 Support & Feedback", data="support_main")], # <--- Naya Button
-        [Button.inline("📜 Rules", data="rules"), Button.inline("👨‍💻 Developer", data="dev_info")],
-        [Button.inline("🔑 Generate String", data="gen_string_internal")] 
+        [Button.inline("𝐄xᴘʟᴏʀᴇ 𝐌ᴏᴅᴜʟᴇs ", data="modules_main")],
+        [Button.inline("𝐂ʟᴧɪᴍ 𝟷-𝐃ᴧʏ 𝐓ʀɪᴧʟ ", data="claim_trial_btn")],
+        [Button.inline("𝐒ᴜᴘᴘᴏʀᴛ", data="support_main")], # <--- Naya Button
+        [Button.inline("𝐑ᴜʟᴇs  ", data="rules"), Button.inline(" 𝐃ᴇᴠᴇʟᴏᴘᴇʀ", data="dev_info")],
+        [Button.inline("𝐆ᴇɴᴇʀᴧᴛᴇ 𝐒ᴇssɪᴏɴ", data="gen_string_internal")] 
     ]
 
     try:
@@ -116,12 +117,17 @@ async def modules_cmd(event):
 
 
 
-# --- 3. CATEGORY HANDLERS ---
+# --- 3. CATEGORY HANDLERS (Add Empire Button here) ---
 
 async def modules_main_logic(event, edit=False):
-    """Universal logic for modules menu to prevent NameError/Crash"""
-    text = "📂 **Select a Category:**\n\nChoose the type of automation you want to deploy."
+    """Universal logic for modules menu with Global Empire Button"""
+    text = (
+        "📂 **Select a Category:**\n\n"
+        "Choose a module to deploy. Empire users can activate all features "
+        "at once using the 'Turbo Deploy' button below."
+    )
     buttons = [
+        [Button.inline("🚀 Deploy Empire Mode (All Bots)", data="activate_all")], # <--- Yahan add kiya
         [Button.inline("🛡️ Management", data="management_ub"), Button.inline("🥳 Fun Tools", data="fun_ub")],
         [Button.inline("🎮 Game Bots", data="games_ub")],
         [Button.inline("🔙 Back to Menu", data="start_back")]
@@ -133,6 +139,8 @@ async def modules_main_logic(event, edit=False):
         except:
             pass
     return await event.respond(text, buttons=buttons)
+
+
 
 # Button Handler
 @bot.on(events.CallbackQuery(data="modules_main"))
@@ -167,7 +175,9 @@ async def management_menu(event):
         "• `.tagdelay <sec>` - Set delay (Default 3s)."
     )
     buttons = [
-        [Button.inline("Deploy Management", data="mod_management")],
+        [Button.inline("👮 Admin Tools", data="mod_admin")],
+        [Button.inline("📢 Tagger (TagAll)", data="mod_tagger")],
+        [Button.inline("🔍 Info Tools", data="mod_info")],
         [Button.inline("🔙 Back", data="modules_main")]
     ]
     await event.edit(text, buttons=buttons)
@@ -182,7 +192,8 @@ async def fun_menu(event):
         "• `.revert` - Reset your profile back to original identity."
     )
     buttons = [
-        [Button.inline("Deploy Clone Tool", data="mod_clone")],
+        [Button.inline("👤 Identity Clone", data="mod_clone")],
+        [Button.inline("💤 AFK ", data="mod_afk")],
         [Button.inline("🔙 Back", data="modules_main")]
     ]
     await event.edit(text, buttons=buttons)
@@ -222,7 +233,6 @@ async def games_menu(event):
     )
     
     buttons = [
-        [Button.inline("🚀 Activate All Modules (Empire Only)", data="activate_all")], # <--- Naya Button
         [Button.inline("WordSeek", data="mod_wordseek"), Button.inline("WordChain", data="mod_wordchain")],
         [Button.inline("Octopus", data="mod_octopus"), Button.inline("Wordly", data="mod_wordly")],
         [Button.inline("🔙 Back to Categories", data="modules_main")]
