@@ -4,7 +4,7 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from config import API_ID, API_HASH, ADMIN_ID
 from database import get_user_session, is_subscribed, get_user_plan_type
-from core.plugin_loader import load_all_modules
+from core.plugin_loader import load_all_modules # Naya loader system
 
 log = logging.getLogger(__name__)
 
@@ -14,59 +14,49 @@ ACTIVE_CLIENTS = {}
 class SessionManager:
     @staticmethod
     async def start_userbot(user_id, module_name):
-        """Starts a userbot session with strict plan enforcement."""
+        """Starts a userbot session with strict Selective Loading."""
         
-        # 🛡️ 1. Security & Subscription Check
+        # 🛡️ 1. Security Check
         if not await is_subscribed(user_id):
             return "❌ Your subscription has expired. Please buy a plan to reactivate."
 
         # 🛡️ 2. Plan Retrieval & Normalization
         plan = await get_user_plan_type(user_id)
         current_plan = str(plan).strip().lower()
-        
-        # Normalize trigger for strict checking
         trigger_clean = str(module_name).strip().lower()
-        # 🔥 Check if this is any kind of 'ALL' request
         is_all_request = "all" in trigger_clean
 
-        # 🔥 THE ULTIMATE GUARD: Stop Standard users from ANY 'ALL' trigger
-        # Agar request me 'all' hai aur plan 'empire' nahi hai, toh seedha block.
+        # 🔥 GUARD: Block Standard users from 'ALL' feature
         if is_all_request and "empire" not in current_plan and user_id != ADMIN_ID:
             return (
                 "❌ **Access Denied!**\n\n"
                 "Your plan (**Standard**) only allows **one module at a time**.\n"
-                "You are not allowed to use the 'Activate All' feature.\n\n"
                 "👉 Please upgrade to **Empire Plan** (₹35) to unlock this."
             )
         
-        # 🛡️ 3. Existing Session Handling
+        # 🛡️ 3. Existing Session Handling (Switching Logic)
         if user_id in ACTIVE_CLIENTS:
-            # For Standard users trying to switch or restart individual modules
             if "empire" not in current_plan and user_id != ADMIN_ID:
                 running_module = ACTIVE_CLIENTS[user_id]["module"]
-                
-                # If trying to start the same one
                 if running_module == module_name.upper():
                     return f"⚠️ Your userbot is already running the **{module_name.upper()}** module."
                 
-                # If they try to trigger any other module (Standard users must stop first)
                 return (
                     f"⚠️ **Access Denied:** You are on the **Standard Plan**.\n\n"
                     f"Please stop your running module **[{running_module}]** first "
                     f"before starting **{module_name.upper()}**."
                 )
             
-            # For Empire/Admin users: If already running, return status
-            if "empire" in current_plan or user_id == ADMIN_ID:
-                if is_all_request:
-                    return f"✅ **Empire Mode Active:** Your userbot is already running with all modules enabled!"
+            # For Empire/Admin: If they click 'Activate All' while already running
+            if ("empire" in current_plan or user_id == ADMIN_ID) and is_all_request:
+                return f"✅ **Empire Mode Active:** Your userbot is already running with all modules enabled!"
 
         # 🛡️ 4. Session Retrieval
         string_session = await get_user_session(user_id)
         if not string_session:
-            return "❌ No session found. Please generate a string using 'Generate String' first."
+            return "❌ No session found. Please login first."
 
-        # 🚀 5. Initialize Fresh Telegram Client with Parallel Processing
+        # 🚀 5. Initialize Telegram Client
         client = TelegramClient(
             StringSession(string_session), 
             API_ID, 
@@ -78,27 +68,32 @@ class SessionManager:
         try:
             await client.connect()
             if not await client.is_user_authorized():
-                return "❌ Invalid Session! Your string was revoked. Please generate a new one."
+                return "❌ Invalid Session! Please generate a new string."
 
-            # 🛠️ 6. Plugin Registration
-            await load_all_modules(client)
+            # 🛠️ 6. SELECTIVE PLUGIN REGISTRATION (The Big Change)
+            # Agar empire hai toh 'None' bhejenge taaki sab load ho
+            # Agar standard hai toh sirf wahi module bhejenge jo click kiya hai
+            if "empire" in current_plan or user_id == ADMIN_ID:
+                load_target = None if is_all_request else trigger_clean
+            else:
+                load_target = trigger_clean
 
-            # Store the active client
-            # Standard users store module name, Empire users store "ALL_MODULES"
+            await load_all_modules(client, target_module=load_target)
+
+            # Store the state
             display_name = "ALL_MODULES" if is_all_request else module_name.upper()
             ACTIVE_CLIENTS[user_id] = {
                 "client": client,
                 "module": display_name
             }
             
-            # Start background execution
             client.loop.create_task(client.run_until_disconnected())
             
-            log.info(f"🚀 Userbot started for {user_id} [{plan}] | Trigger: {module_name}")
+            log.info(f"🚀 Userbot started for {user_id} [{plan}] | Mode: {display_name}")
             
             return (
                 f"🚀 **Userbot Activated!**\n\n"
-                f"**Trigger Mode:** `{display_name}`\n"
+                f"**Loaded Module:** `{display_name}`\n"
                 f"**Plan Status:** `{plan}`\n"
                 f"**Status:** `Online`"
             )
@@ -112,13 +107,9 @@ class SessionManager:
         """Cleanly disconnects the session."""
         if user_id in ACTIVE_CLIENTS:
             try:
-                data = ACTIVE_CLIENTS[user_id]
-                client = data["client"]
-                await client.disconnect()
+                await ACTIVE_CLIENTS[user_id]["client"].disconnect()
                 del ACTIVE_CLIENTS[user_id]
                 return "🛑 **Userbot Stopped Successfully.**"
             except Exception as e:
-                log.error(f"Stop Error for {user_id}: {e}")
-                return f"❌ **Error while stopping:** `{e}`"
-        
-        return "⚠️ Your userbot is not currently running."
+                return f"❌ **Error:** `{e}`"
+        return "⚠️ Not running."
