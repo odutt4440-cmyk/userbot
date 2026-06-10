@@ -35,6 +35,17 @@ async def init_db():
             (user_id INTEGER, chat_id INTEGER, count INTEGER, PRIMARY KEY (user_id, chat_id))''')
         await db.execute('''CREATE TABLE IF NOT EXISTS sudo_users 
             (user_id INTEGER PRIMARY KEY, can_ban INTEGER, can_pay INTEGER)''')
+         # --- AFK TABLE WITH MEDIA SUPPORT ---
+        await db.execute('''CREATE TABLE IF NOT EXISTS afk_settings 
+            (user_id INTEGER PRIMARY KEY, status INTEGER, message TEXT, media TEXT)''')
+
+        # 🔥 AUTO-MIGRATION: Check if 'media' column exists in afk_settings
+        try:
+            await db.execute('SELECT media FROM afk_settings LIMIT 1')
+        except aiosqlite.OperationalError:
+            # Agar column nahi hai, toh add karo
+            await db.execute('ALTER TABLE afk_settings ADD COLUMN media TEXT')
+            log.info("Migration: Added 'media' column to afk_settings table.")
 
         # --- CAMPAIGN TABLES (Keeping as requested) ---
         await db.execute('''CREATE TABLE IF NOT EXISTS campaign_accounts 
@@ -353,6 +364,20 @@ async def global_security_check(event):
         return False
         
     return True
+
+# --- AFK DATABASE FUNCTIONS ---
+
+async def set_afk_data(user_id, status, message=None, media=None):
+    async with aiosqlite.connect(DB_FILE) as db:
+        # INSERT OR REPLACE handles all 4 values properly
+        await db.execute('''INSERT OR REPLACE INTO afk_settings (user_id, status, message, media) 
+            VALUES (?, ?, ?, ?)''', (user_id, 1 if status else 0, message, media))
+        await db.commit()
+
+async def get_afk_data(user_id):
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute('SELECT status, message, media FROM afk_settings WHERE user_id = ?', (user_id,)) as cursor:
+            return await cursor.fetchone() # Returns (status, message, media)
 
 
 # --- PROXY OBJECTS FOR ADMIN ---
