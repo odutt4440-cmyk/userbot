@@ -2,13 +2,13 @@ import datetime
 import logging
 import json
 import asyncio
-import certifi # SSL fix ke liye zaroori hai
+import certifi # SSL fix ke liye
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import MONGO_URL, ADMIN_ID
 
 log = logging.getLogger(__name__)
 
-# --- INITIALIZE VARIABLES (None set karo taaki crash na ho) ---
+# --- INITIALIZE VARIABLES (None set karo taaki NameError na aaye) ---
 db = None
 users_db = None
 subs_db = None
@@ -20,14 +20,15 @@ sudo_db = None
 afk_db = None
 warn_db = None
 
-# --- 🔥 THE FIXED INITIALIZATION FUNCTION ---
+# --- 🔥 THE FINAL FIXED INITIALIZATION FUNCTION ---
 async def init_db():
     global db, users_db, subs_db, state_db, banned_db, trials_db, settings_db, sudo_db, afk_db, warn_db
     try:
         log.info("Connecting to MongoDB Cloud...")
-        # Certifi use karna Railway par SSL error khatam karta hai
+        # Certifi bundle use karna Railway par SSL error khatam karta hai
         ca = certifi.where()
         
+        # Connection parameters - tlsCAFile is crucial for Railway
         client = AsyncIOMotorClient(
             MONGO_URL,
             tlsCAFile=ca, 
@@ -38,7 +39,7 @@ async def init_db():
         
         db = client["UserbotCommunity"]
         
-        # Collections mapping
+        # Collection Mapping (Assigning to Globals)
         users_db = db["users"]
         subs_db = db["subscriptions"]
         state_db = db["game_state"]
@@ -49,13 +50,14 @@ async def init_db():
         afk_db = db["afk_settings"]
         warn_db = db["warnings"]
         
-        # Connection check (Bot yahi wait karega jab tak DB ready na ho)
+        # Ping check
         await db.command("ping")
-        log.info("🚀 MongoDB Cloud Connected Successfully (No Errors)!")
+        log.info("🚀 MongoDB Cloud Connected Successfully!")
         
     except Exception as e:
         log.error(f"❌ MongoDB Connection Failed: {e}")
 
+# Note: Ab 'connect_mongo' ki zarurat nahi hai, sab kuch init_db handle karega.
 
 # Railway me startup ke liye isse call karenge
 async def init_db():
