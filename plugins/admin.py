@@ -1,12 +1,13 @@
 import datetime
-import os
-import shutil 
 import asyncio
-import aiosqlite
+import os
+import json
 from bot_instance import bot 
 from telethon import events, Button, errors
-from config import ADMIN_ID
+from config import ADMIN_ID, SUDO_USERS, LOG_GROUP
 from core.session_manager import ACTIVE_CLIENTS, SessionManager
+
+# --- Sabse zaroori 15+ functions database.py se ---
 from database import (
     add_subscription, 
     ban_user, 
@@ -19,30 +20,20 @@ from database import (
     has_claimed_trial,
     is_staff,
     get_sudo_info, 
-    DB_FILE,
     set_plan_status,
     is_plan_available,
-    set_maintenance
+    set_maintenance,
+    db, # MongoDB Object
+    get_ban_info
 )
 
-# --- NEW SUDO POWER HELPERS ---
-
-async def get_sudo_powers(user_id):
-    """DB se sudo ki powers check karne ke liye"""
-    if user_id == ADMIN_ID:
-        return {"can_ban": 1, "can_pay": 1} # Owner has all powers
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('SELECT can_ban, can_pay FROM sudo_users WHERE user_id = ?', (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return {"can_ban": row[0], "can_pay": row[1]}
-    return None
-
-async def is_staff(user_id):
-    """Check if user is either Admin or any Sudo"""
+# --- HELPER: STAFF PERMISSION CHECK ---
+async def check_power(user_id, power_type):
     if user_id == ADMIN_ID: return True
-    powers = await get_sudo_powers(user_id)
-    return powers is not None
+    info = await get_sudo_info(user_id)
+    if not info: return False
+    # can_ban is index 0, can_pay is index 1
+    return info[0] == 1 if power_type == 'ban' else info[1] == 1
 
 # --- 1. SUDO MANAGEMENT (OWNER ONLY) ---
 
@@ -51,15 +42,11 @@ async def add_sudo_handler(event):
     if event.sender_id != ADMIN_ID: return
     try:
         uid = int(event.pattern_match.group(1))
-        can_ban = int(event.pattern_match.group(2)) # 1 for Yes, 0 for No
-        can_pay = int(event.pattern_match.group(3)) # 1 for Yes, 0 for No
-        
-        async with aiosqlite.connect(DB_FILE) as db:
-            await db.execute('INSERT OR REPLACE INTO sudo_users VALUES (?, ?, ?)', (uid, can_ban, can_pay))
-            await db.commit()
-        
-        powers_msg = f"🚫 Ban: {'✅' if can_ban else '❌'} | 💳 Pay: {'✅' if can_pay else '❌'}"
-        await event.reply(f"👤 **Sudo Added Successfully!**\n**ID:** `{uid}`\n**Powers:** {powers_msg}")
+        can_ban = int(event.pattern_match.group(2))
+        can_pay = int(event.pattern_match.group(3))
+        from database import add_sudo
+        await add_sudo(uid, can_ban, can_pay)
+        await event.reply(f"👤 **Sudo Added:** `{uid}`\nPowers: Ban({can_ban}) | Pay({can_pay})")
     except Exception as e:
         await event.reply(f"❌ **Error:** {e}")
 
@@ -67,38 +54,38 @@ async def add_sudo_handler(event):
 async def rm_sudo_handler(event):
     if event.sender_id != ADMIN_ID: return
     uid = int(event.pattern_match.group(1))
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('DELETE FROM sudo_users WHERE user_id = ?', (uid,))
-        await db.commit()
-    await event.reply(f"❌ **Sudo Removed:** `{uid}` is no longer staff.")
+    from database import remove_sudo
+    await remove_sudo(uid)
+    await event.reply(f"❌ **Sudo Removed:** `{uid}`")
 
 @bot.on(events.NewMessage(pattern='/sudolist'))
 async def sudo_list(event):
     if event.sender_id != ADMIN_ID: return
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('SELECT * FROM sudo_users') as cursor:
-            rows = await cursor.fetchall()
-            if not rows: return await event.reply("No sudo users found.")
-            msg = "🛡️ **Empire Staff List:**\n\n"
-            for r in rows:
-                msg += f"👤 `{r[0]}` | Ban: {r[1]} | Pay: {r[2]}\n"
-            await event.reply(msg)
-
-# --- 2. ACTIVE SESSIONS & LOGOUT ---
-
-@bot.on(events.NewMessage(pattern='/active'))
-async def active_sessions(event):
-    if not await is_staff(event.sender_id): return
-    if not ACTIVE_CLIENTS:
-        return await event.reply("info: No userbot sessions are currently running.")
-    
-    msg = "🚀 **Active Sessions:**\n\n"
-    async with aiosqlite.connect(DB_FILE) as db:
-        for uid in list(ACTIVE_CLIENTS.keys()):
-            async with db.execute('SELECT phone FROM users WHERE user_id = ?', (uid,)) as c:
-                row = await c.fetchone()
-                msg += f"👤 `{uid}` | 📱 `{row[0] if row else 'N/A'}`\n"
+    from database import list_all_sudos
+    rows = await list_all_sudos()
+    if not rows: return await event.reply("No staff found.")
+    msg = "🛡️ **Empire Staff List:**\n\n"
+    for r in rows:
+        msg += f"👤 `{r[0]}` | Ban: {r[1]} | Pay: {r[2]}\n"
     await event.reply(msg)
+
+# --- 2. MODERATION (BAN/UNBAN/LOGOUT) ---
+
+@bot.on(events.NewMessage(pattern=r'/ban (\d+)(?:\s+(.*))?'))
+async def ban_handler(event):
+    if not await check_power(event.sender_id, 'ban'): return
+    user_id = int(event.pattern_match.group(1))
+    reason = event.pattern_match.group(2) or "No reason provided."
+    await ban_user(user_id, reason)
+    if user_id in ACTIVE_CLIENTS: await SessionManager.stop_userbot(user_id)
+    await event.reply(f"🚫 **User Banned:** `{user_id}`\n📝 Reason: {reason}")
+
+@bot.on(events.NewMessage(pattern=r'/unban (\d+)'))
+async def unban_handler(event):
+    if not await check_power(event.sender_id, 'ban'): return
+    user_id = int(event.pattern_match.group(1))
+    await unban_user(user_id)
+    await event.reply(f"✅ **User Unbanned:** `{user_id}`")
 
 @bot.on(events.NewMessage(pattern=r'/logout (\d+)'))
 async def logout_handler(event):
@@ -106,241 +93,133 @@ async def logout_handler(event):
     user_id = int(event.pattern_match.group(1))
     if user_id in ACTIVE_CLIENTS:
         try:
-            client = ACTIVE_CLIENTS[user_id]
-            await client.log_out() 
-            await client.disconnect()
+            await ACTIVE_CLIENTS[user_id]["client"].log_out()
             del ACTIVE_CLIENTS[user_id]
         except: pass
     await remove_user_session(user_id)
-    await event.reply(f"✅ **Logout Successful:** `{user_id}` terminated.")
+    await event.reply(f"✅ **Logout Done:** `{user_id}` session terminated.")
 
+# --- 3. BILLING (APPROVE/CANCEL/TRANSFER) ---
 
-
-# --- 2. BAN USER (With Reason Support) ---
-@bot.on(events.NewMessage(pattern=r'/ban (\d+)(?:\s+(.*))?'))
-async def ban_handler(event):
-    # Power check: Ban power needed
-    p = await get_sudo_powers(event.sender_id)
-    if not p or not p['can_ban']: 
-        return await event.reply("❌ You don't have 'Ban' permission.")
-    
-    user_id = int(event.pattern_match.group(1))
-    reason = event.pattern_match.group(2) or "No reason provided by Admin."
-    
-    await ban_user(user_id, reason)
-    
-    # Session stop logic
-    if user_id in ACTIVE_CLIENTS:
-        await SessionManager.stop_userbot(user_id)
-        
-    await event.reply(f"🚫 **User Banned:** `{user_id}`\n📝 **Reason:** {reason}")
-    
-    try:
-        await bot.send_message(user_id, f"❌ **You have been banned!**\n\n**Reason:** {reason}\n\nContact support if this is a mistake.")
-    except: pass
-        
-@bot.on(events.NewMessage(pattern=r'/unban (\d+)'))
-async def unban_handler(event):
-    p = await get_sudo_powers(event.sender_id)
-    if not p or not p['can_ban']: return
-    user_id = int(event.pattern_match.group(1))
-    await unban_user(user_id)
-    await event.reply(f"✅ **User Unbanned:** `{user_id}`.")
-
-# --- 3. MANUAL APPROVE: /approve <id> <plan> <d> <h> <m> ---
 @bot.on(events.NewMessage(pattern=r'/approve (\d+) (\w+) (\d+)(?: (\d+))?(?: (\d+))?'))
 async def manual_approve(event):
-    # Power check: Pay power needed
-    p = await get_sudo_powers(event.sender_id)
-    if not p or not p['can_pay']: return
-    
+    if not await check_power(event.sender_id, 'pay'): return
     try:
         user_id = int(event.pattern_match.group(1))
+        # Status Check
+        st, _ = await get_sub_info(user_id)
+        if st == "Active":
+            return await event.reply("⚠️ This user already has a plan. Cancel it first.")
         
-        # 🔥 1. THE DOUBLE-PLAN PROTECTION
-        status, _ = await get_sub_info(user_id)
-        if status == "Active":
-            return await event.reply(
-                "❌ **Error:** This user already has an active premium plan.\n\n"
-                "Kindly use `/cancel` first to remove the current plan before re-approving."
-            )
-
-        # 2. Parsing logic
-        plan_raw = event.pattern_match.group(2).replace("_", " ") # Ultra_Standard -> Ultra Standard
-        days = int(event.pattern_match.group(3))
-        hours = int(event.pattern_match.group(4) or 0)
-        minutes = int(event.pattern_match.group(5) or 0)
-        
-        # 3. Call DB (Fixed arguments)
-        from database import add_subscription
-        expiry = await add_subscription(
-            user_id, 
-            plan_type=plan_raw, 
-            days=days, 
-            hours=hours, 
-            minutes=minutes
-        )
-        
-        time_str = f"{days}d {hours}h {minutes}m"
-        await event.reply(
-            f"✅ **Manual Approval Done!**\n\n"
-            f"👤 **User:** `{user_id}`\n"
-            f"💎 **Plan:** {plan_raw}\n"
-            f"⏳ **Duration:** {time_str}"
-        )
-        
-        # Notify User
-        try:
-            await bot.send_message(
-                user_id, 
-                f"🎉 **Premium Activated!**\n\nAdmin has activated your **{plan_raw}** plan for **{time_str}**.",
-                buttons=[[Button.inline("⚙️ Open Modules", data="modules_main")]]
-            )
-        except: pass
-
+        plan_name = event.pattern_match.group(2).replace("_", " ")
+        d = int(event.pattern_match.group(3))
+        h = int(event.pattern_match.group(4) or 0)
+        m = int(event.pattern_match.group(5) or 0)
+        await add_subscription(user_id, plan_type=plan_name, days=d, hours=h, minutes=m)
+        await event.reply(f"✅ **Approved:** `{user_id}`\nPlan: {plan_name} for {d}d {h}h")
     except Exception as e:
-        await event.reply(f"❌ **Error:** `{e}`")
+        await event.reply(f"❌ Error: {e}")
 
-# --- 4. CANCEL PLAN: /cancel <id> ---
 @bot.on(events.NewMessage(pattern=r'/cancel (\d+)'))
 async def cancel_handler(event):
-    p = await get_sudo_powers(event.sender_id)
-    if not p or not p['can_pay']: return
-    
+    if not await check_power(event.sender_id, 'pay'): return
     user_id = int(event.pattern_match.group(1))
-    
-    # 1. Reset in Database (Expired status + Reset expiry_date)
     await cancel_subscription(user_id)
-    
-    # 2. Kill Active Bot Session
-    if user_id in ACTIVE_CLIENTS:
-        await SessionManager.stop_userbot(user_id)
-        
-    await event.reply(f"📉 **Plan Terminated:** User `{user_id}` premium access removed.")
-    try:
-        await bot.send_message(user_id, "⚠️ **Notice:** Your premium subscription has been cancelled by an Admin.")
-    except: pass
-
-# --- 5. INFO & STATS ---
-
-@bot.on(events.NewMessage(pattern=r'/info (\d+)'))
-async def user_info(event):
-    if not await is_staff(event.sender_id): return
-    user_id = int(event.pattern_match.group(1))
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('SELECT phone, last_login FROM users WHERE user_id = ?', (user_id,)) as c:
-            row = await c.fetchone()
-            phone = row[0] if row else "N/A"
-    status, time_left = await get_sub_info(user_id)
-    claimed = await has_claimed_trial(user_id)
-    trial_status = "Claimed (0) ❌" if claimed else "Available (1) ✅"
-    is_live = "Online 🟢" if user_id in ACTIVE_CLIENTS else "Offline 🔴"
-    await event.reply(f"👤 **Info:** `{user_id}`\n📱 **Phone:** `{phone}`\n🎁 **Trial:** {trial_status}\n📡 **Status:** {is_live}\n💳 **Plan:** {status}\n⏳ **Left:** {str(time_left).split('.')[0] if time_left else '0'}")
-
-@bot.on(events.NewMessage(pattern='/stats'))
-async def bot_stats(event):
-    if not await is_staff(event.sender_id): return
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('SELECT COUNT(*) FROM users') as c1: u_count = (await c1.fetchone())[0]
-        async with db.execute('SELECT COUNT(*) FROM subscriptions WHERE status="active"') as c2: s_count = (await c2.fetchone())[0]
-    await event.reply(f"📊 **Stats:** Users: {u_count} | Active: {s_count} | Live: {len(ACTIVE_CLIENTS)}")
-
-# --- 9. GET DATABASE: /getdb ---
-@bot.on(events.NewMessage(pattern='/getdb'))
-async def get_db_file(event):
-    # Sirf staff hi DB mangwa sakte hain
-    if not await is_staff(event.sender_id): return
-    
-    status_msg = await event.reply("⏳ **Preparing database file...**")
-    try:
-        if os.path.exists(DB_FILE):
-            # Live DB ko copy karke bhejenge taaki 'Locked' error na aaye
-            import shutil
-            temp_db = "temp_backup.db"
-            shutil.copy(DB_FILE, temp_db)
-            
-            await bot.send_file(
-                event.chat_id, 
-                temp_db, 
-                caption=f"📁 **Empire Community Database**\n📅 **Exported on:** `{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`"
-            )
-            os.remove(temp_db)
-            await status_msg.delete()
-        else:
-            await status_msg.edit("❌ **Error:** Database file not found.")
-    except Exception as e:
-        await status_msg.edit(f"❌ **Failed to export DB:** `{e}`")
-# --- 6. OWNER ONLY ---
-
-@bot.on(events.NewMessage(pattern=r'/broadcast (.*)'))
-async def broadcast_handler(event):
-    if not await is_staff(event.sender_id): return # Fixed: Staff can broadcast now
-    msg = event.pattern_match.group(1)
-    status_msg = await event.reply("📣 Broadcasting...")
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('SELECT user_id FROM users') as cursor: rows = await cursor.fetchall()
-    done, failed = 0, 0
-    for row in rows:
-        try: await bot.send_message(row[0], msg); done += 1; await asyncio.sleep(0.3)
-        except: failed += 1
-    await status_msg.edit(f"📣 Broadcast Finished!\n✅ Sent: {done} | ❌ Failed: {failed}")
-
-@bot.on(events.NewMessage(pattern=r'/toggleplan (\w+) (on|off)'))
-async def toggle_plan_handler(event):
-    p = await get_sudo_powers(event.sender_id)
-    if not p or not p['can_pay']: return
-
-    plan_key = event.pattern_match.group(1).lower()
-    status = event.pattern_match.group(2).lower()
-    
-    await set_plan_status(plan_key, status)
-    
-    emoji = "✅ ENABLED" if status == "on" else "🚫 DISABLED"
-    await event.reply(f"⚙️ **Plan Manager:**\nPlan `{plan_key.upper()}` is now {emoji}.")
-    
-    if LOG_GROUP:
-        await bot.send_message(LOG_GROUP, f"🛠️ **Admin Action:** Plan `{plan_key}` was toggled `{status}` by `{event.sender_id}`")
-
-@bot.on(events.NewMessage(pattern=r'/reset_trial (\d+)'))
-async def reset_trial_handler(event):
-    if event.sender_id != ADMIN_ID: return
-    u = int(event.pattern_match.group(1))
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('DELETE FROM trials WHERE user_id = ?', (u,))
-        await db.commit()
-    await event.reply(f"🎁 Trial reset for `{u}`.")
+    if user_id in ACTIVE_CLIENTS: await SessionManager.stop_userbot(user_id)
+    await event.reply(f"📉 **Plan Cancelled:** `{user_id}`")
 
 @bot.on(events.NewMessage(pattern=r'/transfer (\d+) (\d+)'))
 async def transfer_handler(event):
     if event.sender_id != ADMIN_ID: return
     f, t = int(event.pattern_match.group(1)), int(event.pattern_match.group(2))
-    s, m = await transfer_subscription(f, t)
-    await event.reply(f"♻️ {m}")
+    await transfer_subscription(f, t)
+    await event.reply(f"♻️ **Transfer Done:** From `{f}` to `{t}`")
 
-# --- 8. MAINTENANCE MODE (Owner Only) ---
-# Usage: /maintenance on <message> OR /maintenance off
+# --- 4. SYSTEM TOOLS (Staff Access) ---
+
+@bot.on(events.NewMessage(pattern='/active'))
+async def active_sessions(event):
+    if not await is_staff(event.sender_id): return
+    if not ACTIVE_CLIENTS: return await event.reply("No active userbots.")
+    msg = "🚀 **Active Sessions:**\n\n"
+    for uid in list(ACTIVE_CLIENTS.keys()):
+        msg += f"👤 `{uid}`\n"
+    await event.reply(msg)
+
+@bot.on(events.NewMessage(pattern='/stats'))
+async def bot_stats(event):
+    if not await is_staff(event.sender_id): return
+    from database import users_db, subs_db
+    u = await users_db.count_documents({})
+    s = await subs_db.count_documents({})
+    await event.reply(f"📊 **Stats:** Users: {u} | Premium: {s} | Live: {len(ACTIVE_CLIENTS)}")
+
+@bot.on(events.NewMessage(pattern=r'/info (\d+)'))
+async def user_info(event):
+    if not await is_staff(event.sender_id): return
+    user_id = int(event.pattern_match.group(1))
+    status, time_left = await get_sub_info(user_id)
+    claimed = await has_claimed_trial(user_id)
+    await event.reply(f"👤 **Info:** `{user_id}`\n🎁 Trial: `{'Claimed' if claimed else 'Available'}`\n💳 Plan: `{status}`\n⏳ Left: `{time_left}`")
+
+# --- 5. BROADCAST & BACKUP ---
+
+@bot.on(events.NewMessage(pattern=r'/broadcast (.*)'))
+async def broadcast_handler(event):
+    if not await is_staff(event.sender_id): return
+    msg = event.pattern_match.group(1)
+    status_msg = await event.reply("📣 Broadcasting...")
+    cursor = db["users"].find({}, {"user_id": 1})
+    done, failed = 0, 0
+    async for user in cursor:
+        try: await bot.send_message(user["user_id"], msg); done += 1; await asyncio.sleep(0.3)
+        except: failed += 1
+    await status_msg.edit(f"✅ Sent: {done} | ❌ Failed: {failed}")
+
+@bot.on(events.NewMessage(pattern='/getdb'))
+async def get_db_backup(event):
+    if not await is_staff(event.sender_id): return
+    status_msg = await event.reply("⏳ **Exporting Cloud Data...**")
+    try:
+        # Mongo data ko JSON file me convert karke bhejenge
+        data = {}
+        for coll in ["users", "subscriptions", "banned_users"]:
+            cursor = db[coll].find({})
+            data[coll] = [doc async for doc in cursor]
+        
+        with open("backup.json", "w", encoding="utf-8") as f:
+            json.dump(data, f, default=str, indent=2)
+            
+        await bot.send_file(event.chat_id, "backup.json", caption="📁 **Empire Cloud Backup (JSON)**")
+        os.remove("backup.json")
+        await status_msg.delete()
+    except Exception as e:
+        await status_msg.edit(f"❌ Error: {e}")
+
+# --- 6. SETTINGS (Maintenance & Toggles) ---
+
+@bot.on(events.NewMessage(pattern=r'/toggleplan (\w+) (on|off)'))
+async def toggle_plan(event):
+    if not await check_power(event.sender_id, 'pay'): return
+    key, status = event.pattern_match.group(1), event.pattern_match.group(2)
+    await set_plan_status(key, status)
+    await event.reply(f"✅ Plan `{key}` turned `{status}`.")
+
 @bot.on(events.NewMessage(pattern=r'/maintenance (on|off)(?:\s+(.*))?'))
 async def maintenance_handler(event):
-    if event.sender_id != ADMIN_ID: 
-        return # Sudo users maintenance control nahi kar sakte
-
+    if event.sender_id != ADMIN_ID: return
     status = event.pattern_match.group(1).lower()
-    maint_text = event.pattern_match.group(2) or "Bot is under maintenance for updates. Please try again later."
-    
-    await set_maintenance(status, maint_text)
-    
-    status_emoji = "🛠️ ON" if status == "on" else "✅ OFF"
-    await event.reply(f"⚙️ **Maintenance Mode:** {status_emoji}\n\n**Display Text:** {maint_text}")
-
+    text = event.pattern_match.group(2) or "Under Maintenance."
+    await set_maintenance(status, text)
+    await event.reply(f"⚙️ Maintenance: {status.upper()}")
 
 # --- STAFF HELP CENTER (Owner & Sudo Only) ---
 @bot.on(events.NewMessage(pattern=r'(?i)^/sudohelp'))
 async def sudo_help(event):
-    # 🛡️ Staff Check: Sirf Owner aur Sudo hi dekh sakte hain
+    # 🛡️ Staff Check
     from database import is_staff, get_sudo_info
-    
     if not await is_staff(event.sender_id):
-        return # Normal users ke liye bot reply hi nahi karega
+        return 
 
     # Powers fetch karo commands dikhane ke liye
     powers = await get_sudo_info(event.sender_id)
@@ -361,82 +240,45 @@ async def sudo_help(event):
         help_msg += "  👉 _Ex: /broadcast Bot updated!_\n"
         help_msg += "• `/transfer <FromID> <ToID>` - Move subscription\n"
         help_msg += "  👉 _Ex: /transfer 111 222_\n"
-        help_msg += "• `/reset_trial <ID>` - Allow trial again\n\n"
+        help_msg += "• `/reset_trial <ID>` - Allow trial again\n"
         help_msg += "• `/maintenance <on/off> <msg>` - Master Switch\n"
+        help_msg += "• `/getdb` - Download Cloud JSON Backup\n\n"
 
     # --- BAN MANAGEMENT ---
     if is_owner or (powers and powers[0] == 1): # can_ban power
         help_msg += "🚫 **Security & Bans:**\n"
         help_msg += "• `/ban <ID> <Reason>` - Block with reason\n"
-        help_msg += "  👉 _Ex: /ban 1234567_reason\n"
-        help_msg += "• `/unban <ID>` - Restore user access\n\n"
+        help_msg += "  👉 _Ex: /ban 1234567_Spamming_\n"
+        help_msg += "• `/unban <ID>` - Restore user access\n"
+        help_msg += "• `/logout <ID>` - Force session termination\n\n"
 
     # --- FINANCIAL & SYSTEM TOOLS ---
     if is_owner or (powers and powers[1] == 1): # can_pay power
         help_msg += "💳 **Management & Billing:**\n"
-        help_msg += "• `/approve <ID> <Plan> <Days>` - Approve any plan\n"
-        help_msg += "  👉 _Ex: /approve 123 Ultra_Empire 30_\n"
-        help_msg += "  👉 _Ex: /approve 123 30 0 0_ (Add 30 days)\n"
-        help_msg += "  👉 _Ex: /approve 123 0 2 30_ (Add 2hr 30m)\n"
+        help_msg += "• `/approve <ID> <Plan> <D> <H> <M>` - Add manual time\n"
+        help_msg += "  👉 _Ex: /approve 123 Ultra_Standard 30 0 0_\n"
         help_msg += "• `/cancel <ID>` - Terminate premium plan\n"
-        help_msg += "• `/logout <ID>` - Permanent session termination\n"
         help_msg += "• `/active` - List currently running userbots\n"
-        help_msg += "• `/info <ID>` - Check phone, trial & expiry info\n"
+        help_msg += "• `/active_plans` - Generate all users report file\n"
+        help_msg += "• `/info <ID>` - Check profile & expiry info\n"
         help_msg += "• `/stats` - View global bot statistics\n"
-        help_msg += "• `/getdb` - Download the SQLite database file\n"
         help_msg += "• `/toggleplan <key> <on/off>` - Enable/Disable a plan\n"
         help_msg += "  👉 _Ex: /toggleplan u_std_15 off_\n"
 
     await event.reply(help_msg)
 
-# --- 10. LIST ALL PREMIUM USERS: /active_plans ---
-@bot.on(events.NewMessage(pattern='/active_plans'))
-async def active_plans_list(event):
+# --- 8. ACTIVE PLANS REPORT ---
+
+@bot.on(events.NewMessage(pattern=r'(?i)^/active_?plans'))
+async def active_plans_report(event):
     if not await is_staff(event.sender_id): return
+    status_msg = await event.reply("⏳ Generating Report...")
+    cursor = db["subscriptions"].find({"status": "active"})
+    report = "EMPIRE ACTIVE PLANS\n" + "="*20 + "\n"
+    async for sub in cursor:
+        report += f"ID: {sub['user_id']} | Plan: {sub['plan']} | Expiry: {sub['expiry_date']}\n"
     
-    status_msg = await event.reply("⏳ **Scanning database for active plans...**")
-    
-    try:
-        async with aiosqlite.connect(DB_FILE) as db:
-            # Sirf unhe uthao jinka status active hai
-            query = 'SELECT user_id, plan, expiry_date FROM subscriptions WHERE status = "active"'
-            async with db.execute(query) as cursor:
-                rows = await cursor.fetchall()
-        
-        if not rows:
-            return await status_msg.edit("ℹ️ No active premium users found.")
-
-        # Ek text file taiyar karenge taaki 2000 users bhi ho toh crash na ho
-        report = "EMPIRE USERBOT - ACTIVE PLANS REPORT\n"
-        report += "="*40 + "\n\n"
-        
-        active_count = 0
-        now = datetime.datetime.now()
-
-        for r in rows:
-            uid, plan, expiry_str = r
-            expiry = datetime.datetime.fromisoformat(expiry_str)
-            
-            if expiry > now:
-                active_count += 1
-                rem = expiry - now
-                days = rem.days
-                # Format: ID | Plan | Time Left
-                report += f"👤 ID: {uid}\n💎 Plan: {plan}\n⏳ Time Left: {days}d {rem.seconds//3600}h\n"
-                report += "-"*20 + "\n"
-
-        file_name = "active_users_report.txt"
-        with open(file_name, "w", encoding="utf-8") as f:
-            f.write(report)
-
-        await bot.send_file(
-            event.chat_id,
-            file_name,
-            caption=f"📊 **Premium Report Generated**\n\n✅ **Active Users:** `{active_count}`\n📅 **Date:** `{now.strftime('%Y-%m-%d')}`"
-        )
-        
-        os.remove(file_name) # File delete kar do server se
-        await status_msg.delete()
-
-    except Exception as e:
-        await status_msg.edit(f"❌ **Failed to generate report:** `{e}`")
+    with open("plans.txt", "w") as f: f.write(report)
+    await bot.send_file(event.chat_id, "plans.txt", caption="📊 **Plan Report**")
+    os.remove("plans.txt")
+    await status_msg.delete()
