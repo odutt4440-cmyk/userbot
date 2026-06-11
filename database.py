@@ -222,9 +222,34 @@ async def list_all_sudos():
 
 # --- 4. SESSION & BAN SYSTEM ---
 
+# --- database.py me save_user_session ko update karo ---
 async def save_user_session(user_id, string_session, phone="N/A"):
-    if users_db is None: return
-    await users_db.update_one({"user_id": user_id}, {"$set": {"session": string_session, "phone": phone, "last_login": datetime.datetime.now()}}, upsert=True)
+    # added 'is_running' default to 0
+    await users_db.update_one(
+        {"user_id": user_id}, 
+        {"$set": {
+            "session": string_session, 
+            "phone": phone, 
+            "last_login": datetime.datetime.now(),
+            "is_running": 0, # Default off
+            "current_module": None
+        }}, 
+        upsert=True
+    )
+
+# --- Naya Function add karo: set_bot_status ---
+async def set_bot_status(user_id, status, module=None):
+    """Status update: 1 for running, 0 for stopped"""
+    await users_db.update_one(
+        {"user_id": user_id},
+        {"$set": {"is_running": 1 if status else 0, "current_module": module}}
+    )
+
+# --- Naya Function add karo: get_active_userbots ---
+async def get_active_userbots():
+    """Restart ke baad resume karne ke liye saare running bots nikalna"""
+    cursor = users_db.find({"is_running": 1})
+    return await cursor.to_list(length=1000)
 
 async def get_user_session(user_id):
     if users_db is None: return None
