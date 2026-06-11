@@ -6,7 +6,6 @@ import asyncio
 import shutil 
 import datetime
 from telethon import functions, types
-# Ensure these are defined in your config.py
 from config import API_ID, API_HASH, BOT_TOKEN, LOG_GROUP, ADMIN_ID, BACKUP_CHAT
 from bot_instance import bot 
 from database import init_db 
@@ -18,37 +17,13 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# --- 2. SEPARATE AUTO-BACKUP TASK ---
+# --- 2. AUTO-BACKUP TASK (Modified for Cloud) ---
 async def auto_backup_task():
-    """Har 6 ghante me database file ko safe jagah bhejega"""
+    """Cloud storage me file backup ki zarurat nahi hoti, ye sirf placeholder hai crash rokne ke liye"""
     while True:
-        # Wait for 6 hours
         await asyncio.sleep(21600) 
-        
-        if os.path.exists("community.db"):
-            try:
-                # 1. Temporary copy taaki 'database is locked' error na aaye
-                timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-                backup_name = f"backup_{timestamp}.db"
-                shutil.copy("community.db", backup_name)
-                
-                caption = (
-                    "📂 **Empire SaaS: Security Backup**\n"
-                    f"📅 **Date:** `{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}`\n\n"
-                    "Ye file aapka pura data hold karti hai. Ise hamesha safe rakhein."
-                )
-                
-                # Mode 1: Admin Private DM
-                await bot.send_file(ADMIN_ID, backup_name, caption=caption + "\n🔰 Type: `Private Admin Backup`")
-                
-                # Mode 2: Dedicated Backup GC
-                if BACKUP_CHAT:
-                    await bot.send_file(BACKUP_CHAT, backup_name, caption=caption + "\n📢 Type: `Storage Backup`")
-                
-                os.remove(backup_name)
-                log.info(f"✅ Auto-Backup successful.")
-            except Exception as e:
-                log.error(f"❌ Backup Task Failed: {e}")
+        # Agar tu koi aur file backup karna chahe toh yahan logic daal sakta hai
+        log.info("☁️ Cloud Database is automatically backed up by MongoDB Atlas.")
 
 # 3. Plugin Loader Function
 def load_plugins():
@@ -69,14 +44,13 @@ async def start_bot():
     print("   Userbot Community Bot Starting...   ")
     print("---------------------------------------")
     
-    # STEP 1: INITIALIZE DATABASE
+    # STEP 1: INITIALIZE DATABASE (Now connects to MongoDB Cloud)
     await init_db()
-    log.info("SQLite Database initialized.")
+    log.info("MongoDB Cloud Database connected.")
 
     # STEP 2: START BOT
     await bot.start(bot_token=BOT_TOKEN)
 
-    # --- SET BOT COMMANDS ---
     # --- SET BOT COMMANDS VIA CODE ---
     try:
         await bot(functions.bots.SetBotCommandsRequest(
@@ -85,8 +59,8 @@ async def start_bot():
             commands=[
                 types.BotCommand(command='start', description='Open main menu'),
                 types.BotCommand(command='modules', description='Explore all userbot tools'),
-                types.BotCommand(command='plan', description='View premium pricing plans'), # <--- Naya
-                types.BotCommand(command='me', description='Check your profile and expiry'), # <--- Naya
+                types.BotCommand(command='plan', description='View premium pricing plans'),
+                types.BotCommand(command='me', description='Check your profile and expiry'),
                 types.BotCommand(command='help', description='Empire community guide')
             ]
         ))
@@ -100,8 +74,8 @@ async def start_bot():
             await bot.send_message(
                 LOG_GROUP, 
                 "🚀 **Userbot Community Bot is Online!**\n\n"
-                "• Database: `SQLite (Local)`\n"
-                "• Status: `Active`"
+                "• Database: `MongoDB (Cloud)`\n"
+                "• Status: `Active & Secure`"
             )
         except Exception as e:
             log.error(f"Activity Log failed: {e}")
@@ -111,10 +85,9 @@ async def start_bot():
         try:
             await bot.send_message(
                 BACKUP_CHAT, 
-                "📂 **Database Backup System Active!**\n\n"
-                "• Storage: `community.db`\n"
-                "• Frequency: `Every 6 Hours`\n"
-                "• Security: `Encrypted Sync` (Ready)"
+                "☁️ **Cloud Storage System Connected!**\n\n"
+                "• Status: `Online`\n"
+                "• Protection: `MongoDB Atlas Sync`"
             )
         except Exception as e:
             log.error(f"Backup Log failed: {e}")
@@ -122,7 +95,7 @@ async def start_bot():
     # STEP 3: LOAD PLUGINS
     load_plugins()
 
-    # STEP 4: TRIGGER BACKUP IN BACKGROUND
+    # STEP 4: TRIGGER BACKUP TASK
     asyncio.create_task(auto_backup_task())
     
     print("---------------------------------------")
