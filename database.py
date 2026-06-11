@@ -20,16 +20,17 @@ sudo_db = None
 afk_db = None
 warn_db = None
 
-# --- TURBO CLOUD CONNECTION (RAILWAY OPTIMIZED) ---
+
+# --- TURBO CLOUD CONNECTION (RAILWAY + SSL OPTIMIZED) ---
 async def init_db():
     global db, users_db, subs_db, state_db, banned_db, trials_db, settings_db, sudo_db, afk_db, warn_db
     try:
-        # certifi.where() ensures we use the correct CA bundle for Railway
+        # Certifi bundle use karna Railway containers me SSL errors khatam karta hai
         ca = certifi.where()
         
         client = AsyncIOMotorClient(
             MONGO_URL,
-            tlsCAFile=ca, # 🔥 Use certifi CA bundle
+            tlsCAFile=ca,        # 🔥 Railway SSL Fix
             serverSelectionTimeoutMS=5000, 
             maxPoolSize=50,
             retryWrites=False
@@ -37,7 +38,7 @@ async def init_db():
         
         db = client["UserbotCommunity"]
         
-        # Assign Collections
+        # Collections mapping
         users_db = db["users"]
         subs_db = db["subscriptions"]
         state_db = db["game_state"]
@@ -48,9 +49,9 @@ async def init_db():
         afk_db = db["afk_settings"]
         warn_db = db["warnings"]
         
-        # Ek chota test query check karne ke liye
+        # Connection check (Bot yahi wait karega jab tak DB ready na ho)
         await db.command("ping")
-        log.info("🚀 MongoDB Cloud Connected (SSL Fix Applied)")
+        log.info("🚀 MongoDB Cloud Connected Successfully!")
     except Exception as e:
         log.error(f"❌ MongoDB Connection Failed: {e}")
 
