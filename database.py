@@ -57,11 +57,6 @@ async def init_db():
     except Exception as e:
         log.error(f"❌ MongoDB Connection Failed: {e}")
 
-# Note: Ab 'connect_mongo' ki zarurat nahi hai, sab kuch init_db handle karega.
-
-# Railway me startup ke liye isse call karenge
-async def init_db():
-    await connect_mongo()
 
 # --- 1. SETTINGS & MAINTENANCE LOGIC ---
 
