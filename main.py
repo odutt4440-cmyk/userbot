@@ -8,7 +8,7 @@ import datetime
 from telethon import functions, types
 from config import API_ID, API_HASH, BOT_TOKEN, LOG_GROUP, ADMIN_ID, BACKUP_CHAT
 from bot_instance import bot 
-from database import init_db 
+from database import init_db, get_active_userbots # added get_active_userbots
 
 # 1. Logging Setup
 logging.basicConfig(
@@ -22,8 +22,29 @@ async def auto_backup_task():
     """Cloud storage me file backup ki zarurat nahi hoti, ye sirf placeholder hai crash rokne ke liye"""
     while True:
         await asyncio.sleep(21600) 
-        # Agar tu koi aur file backup karna chahe toh yahan logic daal sakta hai
         log.info("☁️ Cloud Database is automatically backed up by MongoDB Atlas.")
+
+# --- 🔥 AUTO-RESUME LOGIC (The Saver) ---
+async def resume_userbots():
+    """Bot restart hote hi purane active users ko resume karega"""
+    from core.session_manager import SessionManager
+    
+    log.info("🔍 Checking for userbot sessions to resume...")
+    active_users = await get_active_userbots()
+    
+    if not active_users:
+        log.info("ℹ️ No active sessions found to resume.")
+        return
+
+    for user in active_users:
+        user_id = user["user_id"]
+        module = user.get("current_module", "All Modules")
+        try:
+            # Background me sessions start karna
+            asyncio.create_task(SessionManager.start_userbot(user_id, module))
+            log.info(f"✅ Auto-Resumed session for user: {user_id} ({module})")
+        except Exception as e:
+            log.error(f"❌ Failed to resume {user_id}: {e}")
 
 # 3. Plugin Loader Function
 def load_plugins():
@@ -44,14 +65,14 @@ async def start_bot():
     print("   Userbot Community Bot Starting...   ")
     print("---------------------------------------")
     
-    # STEP 1: INITIALIZE DATABASE (Now connects to MongoDB Cloud)
+    # STEP 1: INITIALIZE DATABASE
     await init_db()
     log.info("MongoDB Cloud Database connected.")
 
     # STEP 2: START BOT
     await bot.start(bot_token=BOT_TOKEN)
 
-    # --- SET BOT COMMANDS VIA CODE ---
+    # --- SET BOT COMMANDS ---
     try:
         await bot(functions.bots.SetBotCommandsRequest(
             scope=types.BotCommandScopeDefault(),
@@ -95,7 +116,8 @@ async def start_bot():
     # STEP 3: LOAD PLUGINS
     load_plugins()
 
-    # STEP 4: TRIGGER BACKUP TASK
+    # 🔥 STEP 4: TRIGGER AUTO-RESUME & BACKUP
+    asyncio.create_task(resume_userbots()) # Resume old sessions
     asyncio.create_task(auto_backup_task())
     
     print("---------------------------------------")
