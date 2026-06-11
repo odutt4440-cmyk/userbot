@@ -110,10 +110,14 @@ async def help_handler(event):
     help_text = "📖 **Help Guide**\n\nUse buttons below to explore and activate premium modules."
     await event.reply(help_text, buttons=[[Button.inline("⚙️ Open Modules", data="modules_main")]])
 
+# Command Handler (/modules)
 @bot.on(events.NewMessage(pattern=r'(?i)^/modules'))
 async def modules_cmd(event):
     if not await is_private_only(event): return
-    await modules_main(event, edit=False)
+    if not await global_security_check(event): return
+    
+    # 🔥 FIX: modules_main ko modules_main_logic se replace kiya
+    await modules_main_logic(event, edit=False)
 
 
 
