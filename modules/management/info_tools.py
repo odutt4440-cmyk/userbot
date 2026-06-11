@@ -1,64 +1,72 @@
+import asyncio
 from telethon import events
-import time
+from telethon.utils import get_peer_id
 
 # --- MODULE REGISTER ---
 def register(client):
 
     # --- 1. ID COMMAND (.id) ---
-    # Usage: .id (standalone) or .id (reply to user)
+    # Har chat me kaam karega (Groups, Channels, DMs)
     @client.on(events.NewMessage(outgoing=True, pattern=r'(?i)^\.id'))
     async def get_id(event):
-        # Reply mode
-        if event.is_reply:
-            reply = await event.get_reply_message()
-            # reply.sender_id can sometimes be None in some channels, so we use from_id logic
-            target_id = reply.sender_id
-            await event.edit(
-                f"👤 **𝐔sᴇʀ 𝐈𝐃:** `{target_id}`\n"
-                f"👥 **𝐆ʀᴏᴜᴘ 𝐈𝐃:** `{event.chat_id}`"
-            )
-        else:
-            # Standalone mode
-            await event.edit(f"👥 **𝐂ʜᴧᴛ 𝐈𝐃:** `{event.chat_id}`")
+        try:
+            # Current Chat ID nikalna
+            chat_id = event.chat_id
+            
+            if event.is_reply:
+                reply = await event.get_reply_message()
+                # Reply wale bande ki ID
+                user_id = reply.sender_id
+                await event.edit(
+                    f"👤 **𝐔sᴇʀ 𝐈𝐃:** `{user_id}`\n"
+                    f"👥 **𝐂ʜᴧᴛ 𝐈𝐃:** `{chat_id}`"
+                )
+            else:
+                # Sirf Chat ID
+                await event.edit(f"👥 **𝐂ʜᴧᴛ 𝐈𝐃:** `{chat_id}`")
+        except Exception as e:
+            print(f"ID Error: {e}")
 
     # --- 2. INFO COMMAND (.info) ---
-    # Usage: .info (reply to user) or .info (self)
     @client.on(events.NewMessage(outgoing=True, pattern=r'(?i)^\.info'))
     async def get_info(event):
-        status = await event.edit("🔍 **𝐅ᴇᴛᴄʜɪɴɢ ᴅᴇᴛᴧɪʟs...**")
+        # Processing message bhejenge taaki pta chale bot zinda hai
+        status = await event.edit("🔍 **𝐒ᴄᴧɴɴɪɴɢ 𝐃ᴇᴛᴧɪʟs...**")
         
-        # Determine target
-        if event.is_reply:
-            reply = await event.get_reply_message()
-            target = reply.sender_id
-        else:
-            target = "me" # Self info if no reply
-
         try:
-            # Fetching the entity safely
-            user = await client.get_entity(target)
+            if event.is_reply:
+                reply = await event.get_reply_message()
+                target = await client.get_entity(reply.sender_id)
+            else:
+                # Agar reply nahi hai toh apni info ya chat info
+                target = await client.get_entity(event.chat_id)
+
+            # Formatting
+            first_name = getattr(target, 'first_name', "N/A")
+            last_name = getattr(target, 'last_name', "N/A")
+            username = f"@{target.username}" if getattr(target, 'username', None) else "None"
+            uid = target.id
             
-            # Formatting Information
-            first_name = user.first_name if user.first_name else "N/A"
-            last_name = user.last_name if user.last_name else "N/A"
-            username = f"@{user.username}" if user.username else "None"
-            user_id = user.id
-            is_bot = "Yes" if user.bot else "No"
-            is_premium = "Yes" if getattr(user, 'premium', False) else "No"
-            
+            # Additional Flags
+            is_bot = "Yes" if getattr(target, 'bot', False) else "No"
+            is_premium = "Yes" if getattr(target, 'premium', False) else "No"
+            is_scam = "Yes" if getattr(target, 'scam', False) else "No"
+
             info_text = (
-                "👤 **𝐔sᴇʀ 𝐈ɴꜰᴏʀᴍᴧᴛɪᴏɴ**\n"
+                "👤 **𝐔sᴇʀ / 𝐂ʜᴧᴛ 𝐈ɴꜰᴏ**\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"📝 **𝐅ɪʀsᴛ 𝐍ᴧᴍᴇ:** {first_name}\n"
-                f"📝 **𝐋ᴧsᴛ 𝐍ᴧᴍᴇ:** {last_name}\n"
-                f"🆔 **𝐔sᴇʀ 𝐈𝐃:** `{user_id}`\n"
+                f"📝 **𝐍ᴧᴍᴇ:** {first_name} {last_name if last_name != 'N/A' else ''}\n"
+                f"🆔 **𝐈𝐃:** `{uid}`\n"
                 f"🔗 **𝐔sᴇʀɴᴧᴍᴇ:** {username}\n"
                 f"🤖 **𝐁ᴏᴛ:** {is_bot}\n"
                 f"💎 **𝐏ʀᴇᴍɪᴜᴍ:** {is_premium}\n"
+                f"🚫 **𝐒ᴄᴧᴍ:** {is_scam}\n"
                 "━━━━━━━━━━━━━━━━━━━━"
             )
             await status.edit(info_text)
             
         except Exception as e:
-            # Error reporting
             await status.edit(f"❌ **𝐄ʀʀᴏʀ:** `{str(e)}` ")
+            # 5 second baad error delete karo taaki chat saaf rahe
+            await asyncio.sleep(5)
+            await status.delete()
