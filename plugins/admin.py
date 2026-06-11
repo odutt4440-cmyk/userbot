@@ -24,7 +24,9 @@ from database import (
     is_plan_available,
     set_maintenance,
     db, # MongoDB Object
-    get_ban_info
+    get_ban_info,
+    users_db_proxy, 
+    subs_db_proxy
 )
 
 # --- HELPER: STAFF PERMISSION CHECK ---
@@ -146,13 +148,21 @@ async def active_sessions(event):
         msg += f"👤 `{uid}`\n"
     await event.reply(msg)
 
+# --- 7. GLOBAL STATS (Fixed for MongoDB Proxy) ---
 @bot.on(events.NewMessage(pattern='/stats'))
 async def bot_stats(event):
     if not await is_staff(event.sender_id): return
-    from database import users_db, subs_db
-    u = await users_db.count_documents({})
-    s = await subs_db.count_documents({})
-    await event.reply(f"📊 **Stats:** Users: {u} | Premium: {s} | Live: {len(ACTIVE_CLIENTS)}")
+    
+    # Proxy objects use karke async count mangenge
+    u_count = await users_db_proxy.count_documents({})
+    s_count = await subs_db_proxy.count_documents({})
+    
+    await event.reply(
+        f"📊 **Empire Global Stats**\n\n"
+        f"👤 **Total Registered:** `{u_count}`\n"
+        f"💎 **Active Premium:** `{s_count}`\n"
+        f"📡 **Running Bots:** `{len(ACTIVE_CLIENTS)}`"
+    )
 
 @bot.on(events.NewMessage(pattern=r'/info (\d+)'))
 async def user_info(event):
