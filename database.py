@@ -2,13 +2,13 @@ import datetime
 import logging
 import json
 import asyncio
-import certifi # SSL fix ke liye
+import certifi # SSL fix ke liye zaroori hai
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import MONGO_URL, ADMIN_ID
 
 log = logging.getLogger(__name__)
 
-# --- INITIALIZE VARIABLES ---
+# --- INITIALIZE VARIABLES (None set karo taaki crash na ho) ---
 db = None
 users_db = None
 subs_db = None
@@ -20,17 +20,17 @@ sudo_db = None
 afk_db = None
 warn_db = None
 
-
-# --- TURBO CLOUD CONNECTION (RAILWAY + SSL OPTIMIZED) ---
+# --- 🔥 THE FIXED INITIALIZATION FUNCTION ---
 async def init_db():
     global db, users_db, subs_db, state_db, banned_db, trials_db, settings_db, sudo_db, afk_db, warn_db
     try:
-        # Certifi bundle use karna Railway containers me SSL errors khatam karta hai
+        log.info("Connecting to MongoDB Cloud...")
+        # Certifi use karna Railway par SSL error khatam karta hai
         ca = certifi.where()
         
         client = AsyncIOMotorClient(
             MONGO_URL,
-            tlsCAFile=ca,        # 🔥 Railway SSL Fix
+            tlsCAFile=ca, 
             serverSelectionTimeoutMS=5000, 
             maxPoolSize=50,
             retryWrites=False
@@ -51,10 +51,10 @@ async def init_db():
         
         # Connection check (Bot yahi wait karega jab tak DB ready na ho)
         await db.command("ping")
-        log.info("🚀 MongoDB Cloud Connected Successfully!")
+        log.info("🚀 MongoDB Cloud Connected Successfully (No Errors)!")
+        
     except Exception as e:
         log.error(f"❌ MongoDB Connection Failed: {e}")
-
 
 
 # Railway me startup ke liye isse call karenge
