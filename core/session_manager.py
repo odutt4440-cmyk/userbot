@@ -3,8 +3,8 @@ import asyncio
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from config import API_ID, API_HASH, ADMIN_ID
-from database import get_user_session, is_subscribed, get_user_plan_type
-from core.plugin_loader import load_all_modules # Naya loader system
+from database import get_user_session, is_subscribed, get_user_plan_type, set_bot_status # added set_bot_status
+from core.plugin_loader import load_all_modules
 
 log = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ ACTIVE_CLIENTS = {}
 class SessionManager:
     @staticmethod
     async def start_userbot(user_id, module_name):
-        """Starts a userbot session with strict Selective Loading."""
+        """Starts a userbot session with strict Selective Loading and Auto-Resume support."""
         
         # 🛡️ 1. Security Check
         if not await is_subscribed(user_id):
@@ -68,11 +68,9 @@ class SessionManager:
         try:
             await client.connect()
             if not await client.is_user_authorized():
-                return "❌ Invalid Session! Please generate a new string."
+                return "❌ Invalid Session! Your string was revoked. Please generate a new one."
 
-            # 🛠️ 6. SELECTIVE PLUGIN REGISTRATION (The Big Change)
-            # Agar empire hai toh 'None' bhejenge taaki sab load ho
-            # Agar standard hai toh sirf wahi module bhejenge jo click kiya hai
+            # 🛠️ 6. SELECTIVE PLUGIN REGISTRATION
             if "empire" in current_plan or user_id == ADMIN_ID:
                 load_target = None if is_all_request else trigger_clean
             else:
@@ -86,6 +84,9 @@ class SessionManager:
                 "client": client,
                 "module": display_name
             }
+            
+            # 🔥 DATABASE STATUS SYNC (For Auto-Resume)
+            await set_bot_status(user_id, True, display_name)
             
             client.loop.create_task(client.run_until_disconnected())
             
@@ -107,6 +108,9 @@ class SessionManager:
         """Cleanly disconnects the session."""
         if user_id in ACTIVE_CLIENTS:
             try:
+                # 🔥 Update DB Status first
+                await set_bot_status(user_id, False)
+                
                 await ACTIVE_CLIENTS[user_id]["client"].disconnect()
                 del ACTIVE_CLIENTS[user_id]
                 return "🛑 **Userbot Stopped Successfully.**"
