@@ -4,9 +4,7 @@ import logging
 log = logging.getLogger(__name__)
 
 # --- MODULES MAPPING ---
-# --- core/plugin_loader.py update karo ---
-
-# Modules ki Master List (Ab short names bhi support karega)
+# Saare modules ke short aur full names yahan map hain
 MODULE_MAP = {
     "wordly": "modules.games.wordly.wordly",
     "wordseek": "modules.games.wordseek.wordseek",
@@ -15,7 +13,6 @@ MODULE_MAP = {
     "clone": "modules.fun.clone",
     "afk": "modules.fun.afk",
     "tagger": "modules.management.tagger",
-    # Dono support karega taaki mismatch na ho
     "info": "modules.management.info_tools",
     "info_tools": "modules.management.info_tools",
     "group_tools": "modules.management.group_tools",
@@ -23,31 +20,42 @@ MODULE_MAP = {
 }
 
 async def load_all_modules(client, target_module=None):
+    """
+    Railway Optimized Selective Loader
+    """
     to_load = []
     
-    # 1. Empire/Owner: Sab load karo
-    if target_module is None or str(target_module).lower() in ["all", "all modules"]:
-        to_load = list(set(MODULE_MAP.values())) # set() handles duplicates
+    # Clean the target name (remove spaces and lowercase it)
+    target_clean = str(target_module).strip().lower() if target_module else None
+
+    # 1. EMPIRE / OWNER: Load everything
+    if not target_clean or target_clean in ["all", "all modules", "all_modules"]:
+        to_load = list(set(MODULE_MAP.values()))
+        log.info("⚡ Empire Mode: Registering all handlers.")
     else:
-        # 2. Standard: Specific module + Basic Tools (Always-ON)
-        # Hum target_module ko lower karke map se asli path nikalenge
-        target_clean = str(target_module).lower()
+        # 2. STANDARD: Specific Module + Essential Tools
         main_path = MODULE_MAP.get(target_clean)
         
         if main_path:
             to_load.append(main_path)
-            # Essential tools always load for Standard users too
+            # Essential tools are ALWAYS loaded (Info & Group tools)
             to_load.append(MODULE_MAP["info_tools"])
             to_load.append(MODULE_MAP["group_tools"])
+            log.info(f"🎯 Standard Mode: Registering [{target_clean}] + Essentials.")
         else:
-            log.error(f"❌ Module '{target_module}' not found in MODULE_MAP!")
+            # Ye line humein batayegi ki problem kya hai
+            log.error(f"❌ ERROR: Key '{target_clean}' not found in MODULE_MAP!")
+            log.error(f"Available keys are: {list(MODULE_MAP.keys())}")
             return
 
-    # 3. Registration
-    for module_path in set(to_load): # set() taaki koi file do baar load na ho
+    # 3. Execution (Registering unique paths)
+    for module_path in set(to_load):
         try:
             module = importlib.import_module(module_path)
-            module.register(client)
-            log.info(f"✅ Registered: {module_path}")
+            if hasattr(module, 'register'):
+                module.register(client)
+                log.info(f"✅ Registered: {module_path}")
+            else:
+                log.warning(f"⚠️ Module {module_path} has no register() function.")
         except Exception as e:
             log.error(f"❌ Failed to load {module_path}: {e}")
