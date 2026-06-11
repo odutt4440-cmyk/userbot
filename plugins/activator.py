@@ -13,11 +13,17 @@ NAME_MAP = {
     "management": "group_tools"
 }
 
+# --- plugins/activator.py me get_clean_name update karo ---
+
 def get_clean_name(data_bytes):
+    """Callback data se saare prefixes saaf karne ke liye"""
     data = data_bytes.decode("utf-8")
-    name = data.replace("activate_", "").replace("force_start_", "").replace("stop_", "").replace("start_ub_", "")
-    # Agar mapping me hai toh badlo, warna wahi rehne do
-    return NAME_MAP.get(name, name)
+    # added .replace("mod_", "")
+    name = data.replace("activate_", "").replace("force_start_", "").replace("stop_", "").replace("start_ub_", "").replace("mod_", "")
+    
+    # Simple mapping backup
+    name_map = {"info": "info_tools", "management": "group_tools"}
+    return name_map.get(name, name)
 
 @bot.on(events.CallbackQuery(pattern=r"activate_"))
 async def activate_module(event):
