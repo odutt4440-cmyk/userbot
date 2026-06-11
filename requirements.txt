@@ -1,5 +1,8 @@
 telethon
-aiosqlite
+motor
+pymongo[srv]
+dnspython
+certifi
 python-dotenv
 cryptography
 requests
