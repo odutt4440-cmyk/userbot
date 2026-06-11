@@ -269,20 +269,31 @@ def register(client):
 
         if not start_letter: return
 
-        req = re.search(r"include\s+([a-z])", text)
-        ban_req = re.search(r"exclude\s+(.*?)(?:and|\.|\n)", text)
+        # 🔥 FIXED CONSTRAINTS EXTRACTION (Handles Uppercase from Game Bot)
+        # 1. Required Letter (Handles A or a)
+        req = re.search(r"include\s+([a-zA-Z])", text)
+        
+        # 2. Banned Letters (Handles D, F, M etc.)
+        ban_req = re.search(r"exclude\s+(.*?)(?:and|\.|\n|letters)", text)
+        banned_list = []
+        if ban_req:
+            # [a-zA-Z] use kiya taaki Uppercase bhi pakad sake aur lower() kiya taaki dictionary se match ho
+            banned_list = [b.lower() for b in re.findall(r"[a-zA-Z]", ban_req.group(1))]
+
+        # 3. Min Length
         ml = re.search(r"at least\s+(\d+)", text)
         
+        # FIND WORD
         word = get_valid_word(
             start=start_letter,
             end=client.wc_spam_mode.get(event.chat_id),
             required=req.group(1).lower() if req else None,
-            banned=re.findall(r"[a-z]", ban_req.group(1)) if ban_req else [],
+            banned=banned_list, # Updated list
             used=client.wc_active_games[event.chat_id]["used"],
             min_len=int(ml.group(1)) if ml else 1,
             banned_end=client.wc_banned_ends.get(event.chat_id)
         )
-
+        
         if word:
             client.wc_active_games[event.chat_id]["used"].add(word)
             await typing(event.chat_id)
