@@ -186,25 +186,27 @@ async def management_menu(event):
     ]
     await event.edit(text, buttons=buttons)
 
-# --- 5. FUN TOOLS MENU (Separated Buttons) ---
+## --- 5. FUN TOOLS MENU (With Auto-Reaction Added!) ---
 @bot.on(events.CallbackQuery(data="fun_ub"))
 async def fun_menu(event):
     if not await global_security_check(event): return
     text = (
-        "🥳 **𝐔sᴇʀʙᴏᴛ 𝐅ᴜɴ 𝐒ᴜɪᴛᴇ**\n\n"
-        "👤 **𝐈ᴅᴇɴᴛɪᴛʏ 𝐂ʟᴏɴᴇ:**\n"
+        "🥳 *𝐔sᴇʀʙᴏᴛ 𝐅ᴜɴ 𝐒ᴜɪᴛᴇ* \n\n"
+        "👤 *𝐈ᴅᴇɴᴛɪᴛʏ 𝐂规ᴏɴᴇ:* \n"
         "• `.clone` — Reply to copy a profile.\n"
         "• `.revert` — Restore your original profile.\n\n"
-        "💤 **𝐀𝐅𝐊 𝐒ʏsᴛᴇᴍ:**\n"
+        "💤 *𝐀𝐅Κ 𝐒ʏsᴛᴇᴍ:* \n"
         "• `.afk [msg]` — Auto-reply for DMs.\n\n"
-        "🖼️ **𝐒ᴛɪᴄᴋᴇʀs & 𝐌ᴇᴍɪꜰʏ:**\n"
+        "🖼️ *𝐒ᴛɪᴄᴋᴇʀs & 𝐌ᴇᴍɪꜰʏ:* \n"
         "• `.kang` — Add any sticker/photo to your pack.\n"
-        "• `.mm [text]` — Create memes from stickers."
+        "• `.mm [text]` — Create memes from stickers.\n\n"
+        "🎭 *𝐀ᴜᴛᴏ-𝐑ᴇᴧᴄᴛɪᴏɴ (Target/GC):* \n"
+        "• `.autoreact [emoji]` — Reply to someone OR type openly in GC.\n"
+        "• `.stopreact` — Stop auto-reactions in the current chat."
     )
     buttons = [
-        [Button.inline("👤 Identity Clone", data="mod_clone")],
-        [Button.inline("💤 AFK Auto-Reply", data="mod_afk")],
-        [Button.inline("🖼️ Stickers & Memify", data="mod_stickers")], # <--- Naya Separate Button
+        [Button.inline("👤 Identity Clone", data="mod_clone"), Button.inline("💤 AFK Auto-Reply", data="mod_afk")],
+        [Button.inline("🖼️ Stickers & Memify", data="mod_stickers"), Button.inline("🎭 Auto-Reaction", data="mod_reaction")],
         [Button.inline("🔙 𝐁ᴧᴄᴋ", data="modules_main")]
     ]
     await event.edit(text, buttons=buttons)
