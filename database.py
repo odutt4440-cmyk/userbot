@@ -19,6 +19,10 @@ settings_db = None
 sudo_db = None
 afk_db = None
 warn_db = None
+stealth_db = None
+ai_db = None
+pack_db = None
+reaction_db = None
 
 # --- 🔥 THE FINAL FIXED INITIALIZATION FUNCTION ---
 async def init_db():
@@ -49,7 +53,10 @@ async def init_db():
         sudo_db = db["sudo_users"]
         afk_db = db["afk_settings"]
         warn_db = db["warnings"]
-        
+        stealth_db = db["stealth_settings"]
+        ai_db = db["ai_settings"]
+        pack_db = db["sticker_packs"]
+        reaction_db = db["reaction_settings"]
         # Ping check
         await db.command("ping")
         log.info("🚀 MongoDB Cloud Connected Successfully!")
@@ -334,6 +341,64 @@ async def global_security_check(event):
         await event.reply(f"🚫 **Access Denied!**\n\nReason: `{reason}`")
         return False
     return True
+
+# --- 8. STEALTH & AI LOGIC (Secret Snatcher / Groq) ---
+
+async def set_stealth_status(user_id, feature, status):
+    """feature: 'snatcher' (view-once) or 'antidelete'"""
+    if stealth_db is None: return
+    await stealth_db.update_one(
+        {"user_id": user_id}, 
+        {"$set": {feature: 1 if status else 0}}, 
+        upsert=True
+    )
+
+async def get_stealth_settings(user_id):
+    if stealth_db is None: return {"snatcher": 0, "antidelete": 0}
+    res = await stealth_db.find_one({"user_id": user_id})
+    return res if res else {"snatcher": 0, "antidelete": 0}
+
+async def set_ai_status(user_id, status):
+    if ai_db is None: return
+    await ai_db.update_one({"user_id": user_id}, {"$set": {"active": 1 if status else 0}}, upsert=True)
+
+# --- 9. STICKER PACK LOGIC (No Mismatch) ---
+
+async def save_user_pack(user_id, pack_name, pack_short_name):
+    """User ke custom name ko asli Telegram short name se link karo"""
+    if pack_db is None: return
+    await pack_db.update_one(
+        {"user_id": user_id, "pack_name": pack_name.lower()},
+        {"$set": {
+            "short_name": pack_short_name, 
+            "last_used": datetime.datetime.now()
+        }},
+        upsert=True
+    )
+
+async def get_pack_short_name(user_id, pack_name):
+    if pack_db is None: return None
+    res = await pack_db.find_one({"user_id": user_id, "pack_name": pack_name.lower()})
+    return res["short_name"] if res else None
+
+async def get_all_user_packs(user_id):
+    if pack_db is None: return []
+    cursor = pack_db.find({"user_id": user_id})
+    return [p async for p in cursor]
+
+# --- 10. AUTO-REACTION LOGIC ---
+
+async def set_reaction_data(user_id, chat_id, emoji):
+    if reaction_db is None: return
+    await reaction_db.update_one(
+        {"user_id": user_id, "chat_id": chat_id},
+        {"$set": {"emoji": emoji, "active": 1}},
+        upsert=True
+    )
+
+async def get_reaction_data(user_id, chat_id):
+    if reaction_db is None: return None
+    return await reaction_db.find_one({"user_id": user_id, "chat_id": chat_id})
 
 # --- 7. PROXY OBJECTS FOR ADMIN COMMANDS ---
 class CollectionProxy:
