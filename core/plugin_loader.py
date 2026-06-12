@@ -13,6 +13,7 @@ MODULE_MAP = {
     "clone": "modules.fun.clone",
     "afk": "modules.fun.afk",
     "stickers": "modules.fun.stickers",
+    "reaction": "modules.fun.reaction",
     "tagger": "modules.management.tagger",
     "info": "modules.management.info_tools",
     "info_tools": "modules.management.info_tools",
