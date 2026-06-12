@@ -152,13 +152,7 @@ async def modules_callback(event):
     if not await global_security_check(event): return
     await modules_main_logic(event, edit=True)
 
-# Command Handler (/modules)
-@bot.on(events.NewMessage(pattern=r'(?i)^/modules'))
-async def modules_cmd(event):
-    if not await is_private_only(event): return
-    if not await global_security_check(event): return
-    # FIX: function name should be modules_main_logic
-    await modules_main_logic(event, edit=False)
+
 
 # --- 4. MANAGEMENT TOOLS MENU ---
 @bot.on(events.CallbackQuery(data="management_ub"))
