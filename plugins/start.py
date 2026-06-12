@@ -186,19 +186,26 @@ async def management_menu(event):
     ]
     await event.edit(text, buttons=buttons)
 
-# --- 5. FUN TOOLS MENU ---
+# --- 5. FUN TOOLS MENU (Separated Buttons) ---
 @bot.on(events.CallbackQuery(data="fun_ub"))
 async def fun_menu(event):
+    if not await global_security_check(event): return
     text = (
-        "🥳 **Userbot Fun Modules**\n\n"
-        "**Identity Clone Tool:**\n"
-        "• `.clone` - Reply to any user to steal their Name, Bio, and Photo.\n"
-        "• `.revert` - Reset your profile back to original identity."
+        "🥳 **𝐔sᴇʀʙᴏᴛ 𝐅ᴜɴ 𝐒ᴜɪᴛᴇ**\n\n"
+        "👤 **𝐈ᴅᴇɴᴛɪᴛʏ 𝐂ʟᴏɴᴇ:**\n"
+        "• `.clone` — Reply to copy a profile.\n"
+        "• `.revert` — Restore your original profile.\n\n"
+        "💤 **𝐀𝐅𝐊 𝐒ʏsᴛᴇᴍ:**\n"
+        "• `.afk [msg]` — Auto-reply for DMs.\n\n"
+        "🖼️ **𝐒ᴛɪᴄᴋᴇʀs & 𝐌ᴇᴍɪꜰʏ:**\n"
+        "• `.kang` — Add any sticker/photo to your pack.\n"
+        "• `.mm [text]` — Create memes from stickers."
     )
     buttons = [
         [Button.inline("👤 Identity Clone", data="mod_clone")],
-        [Button.inline("💤 AFK ", data="mod_afk")],
-        [Button.inline("🔙 Back", data="modules_main")]
+        [Button.inline("💤 AFK Auto-Reply", data="mod_afk")],
+        [Button.inline("🖼️ Stickers & Memify", data="mod_stickers")], # <--- Naya Separate Button
+        [Button.inline("🔙 𝐁ᴧᴄᴋ", data="modules_main")]
     ]
     await event.edit(text, buttons=buttons)
 
