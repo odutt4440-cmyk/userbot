@@ -79,6 +79,7 @@ async def start_bot():
             lang_code='en',
             commands=[
                 types.BotCommand(command='start', description='Open main menu'),
+                types.BotCommand(command="commands", description="All Userbot Commands list"),
                 types.BotCommand(command='modules', description='Explore all userbot tools'),
                 types.BotCommand(command='plan', description='View premium pricing plans'),
                 types.BotCommand(command='me', description='Check your profile and expiry'),
