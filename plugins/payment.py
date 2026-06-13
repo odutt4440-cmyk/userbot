@@ -1,8 +1,17 @@
 import asyncio
 import re
+import os
 from bot_instance import bot 
 from telethon import events, Button
+from core.session_manager import SessionManager
 from config import ADMIN_ID, LOG_GROUP, SUDO_USERS
+# UPI_ID aur PAY_QR config.py se uthayenge
+try:
+    from config import UPI_ID, PAY_QR
+except ImportError:
+    UPI_ID = "sparshbaniya@fam" # Fallback agar config me na ho
+    PAY_QR = "assets/qr.jpg" # Local path
+
 from database import add_subscription, get_sudo_info, global_security_check
 
 # Mapping for all 8 plans: Price, Full Name, and Days
@@ -28,7 +37,7 @@ async def can_user_approve(user_id):
         return True
     return False
 
-# --- 1. SHOW PAYMENT INFO (Universal Function) ---
+# --- 1. SHOW PAYMENT INFO (Updated for QR Scanner & UPI) ---
 async def show_payment_info(event, plan_key):
     user_id = event.sender_id
     plan = PLAN_MAP.get(plan_key)
@@ -45,18 +54,43 @@ async def show_payment_info(event, plan_key):
         except: pass
 
     is_ultra = "Ultra" in plan['name']
+    
+    # UPI ID logic - Config se ya direct
+    upi_to_show = UPI_ID 
+    
     pay_text = (
         f"🎯 **Selected Plan:** {plan['name']}\n"
         f"⏳ **Duration:** {plan['days']} Days\n"
         f"💰 **Amount:** ₹{plan['price']}\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "**Payment Instructions:**\n"
-        "👉 UPI ID: `yourupi@upi` (Tap to copy)\n\n"
+        "**𝐏ᴧʏᴍᴇɴᴛ 𝐈ɴsᴛʀᴜᴄᴛɪᴏɴs:**\n"
+        f"👉 UPI ID: `{upi_to_show}` (Tap to copy)\n\n"
         "✅ **After Payment:** Send the **Screenshot** here.\n"
         f"{'🎁 *Note: We will provide you an Account ID after verification.*' if is_ultra else ''}\n"
         "━━━━━━━━━━━━━━━━━━━━"
     )
-    await event.edit(pay_text, buttons=[Button.inline("❌ Cancel / Change Plan", data="pay_now")])
+
+    # QR Scanner Image logic (Local Asset Support)
+    # Railway/VPS par 'assets/qr.jpg' path check karega
+    qr_file = PAY_QR if os.path.exists(PAY_QR) else PAY_QR 
+
+    try:
+        # Purana message delete karke naya Photo message bhejenge
+        await event.delete()
+        await bot.send_file(
+            event.chat_id,
+            qr_file,
+            caption=pay_text,
+            buttons=[Button.inline("❌ Cancel / Change Plan", data="pay_now")]
+        )
+    except Exception as e:
+        # Fallback agar photo na mile toh sirf text bhej do
+        print(f"QR Send Error: {e}")
+        await bot.send_message(
+            event.chat_id, 
+            pay_text, 
+            buttons=[Button.inline("❌ Cancel / Change Plan", data="pay_now")]
+        )
 
 # --- 2. RECEIVE SCREENSHOT ---
 @bot.on(events.NewMessage)
@@ -88,7 +122,6 @@ async def receive_screenshot(event):
         )
         
         if LOG_GROUP:
-            # Data format: appr_PLANKEY_USERID
             await bot.send_file(
                 LOG_GROUP,
                 event.photo,
@@ -101,31 +134,26 @@ async def receive_screenshot(event):
         
         del WAITING_FOR_PAYMENT[user_id]
 
-# --- 4. SUDO APPROVAL LOGIC (Fixed for Plan, Days & Double-Plan Protection) ---
+# --- 4. SUDO APPROVAL LOGIC ---
 @bot.on(events.CallbackQuery(pattern=r"appr_(\w+)_(\d+)"))
 async def approve_payment(event):
-    # 1. Permission Check
     if not await can_user_approve(event.sender_id):
         await event.answer("⚠️ You don't have 'Pay' permission.", alert=True)
         return
 
-    # 2. Data Parsing
     data = event.data.decode("utf-8").split("_")
-    target_user_id = int(data[-1]) # User ID
-    plan_key = "_".join(data[1:-1]) # Plan Key (std_15, etc.)
+    target_user_id = int(data[-1])
+    plan_key = "_".join(data[1:-1])
 
-    # 🔥 3. THE DOUBLE-PLAN PROTECTION (NEW)
     from database import get_sub_info
     status, _ = await get_sub_info(target_user_id)
     if status == "Active":
-        # Agar user ka plan active hai toh admin ko alert do aur aage mat badho
         return await event.answer(
             "⚠️ This user already has an active premium plan!\n\n"
             "Kindly use /cancel first to remove the current plan before approving a new one.", 
             alert=True
         )
 
-    # 4. Plan Verification
     plan_info = PLAN_MAP.get(plan_key)
     if not plan_info:
         return await event.answer("❌ Error: Invalid Plan Key.")
@@ -134,7 +162,6 @@ async def approve_payment(event):
     plan_name = plan_info['name'] 
     plan_days = plan_info['days'] 
 
-    # 5. Database Update
     from database import add_subscription
     expiry = await add_subscription(
         target_user_id, 
@@ -142,7 +169,6 @@ async def approve_payment(event):
         days=plan_days
     )
     
-    # 6. Update Admin UI
     await event.edit(
         f"✅ **{plan_name} Activated**\n"
         f"🆔 **User:** `{target_user_id}`\n"
@@ -151,7 +177,6 @@ async def approve_payment(event):
         f"📅 **Expiry:** `{expiry.strftime('%Y-%m-%d %H:%M')}`"
     )
     
-    # 7. Notify User
     try:
         feature_text = "⚠️ Standard: 1 module at a time." if "Standard" in plan_name else "🚀 Empire: All modules together!"
         success_msg = (
@@ -163,7 +188,7 @@ async def approve_payment(event):
         await bot.send_message(target_user_id, success_msg, buttons=[[Button.inline("⚙️ Open Modules", data="modules_main")]])
     except: pass
 
-# --- 4. SUDO REJECT LOGIC ---
+# --- SUDO REJECT LOGIC ---
 @bot.on(events.CallbackQuery(pattern=r"reject_"))
 async def reject_payment(event):
     if not await can_user_approve(event.sender_id):
