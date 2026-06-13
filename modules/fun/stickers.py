@@ -8,13 +8,13 @@ from database import save_user_pack, get_pack_short_name
 
 log = logging.getLogger(__name__)
 
-# --- 🛠️ HELPER: RESIZE & CONVERT TO PNG ---
+# --- 🛠️ HELPER: RESIZE & CONVERT TO PNG (Strict Telegram Specs) ---
 def prepare_sticker(image_bytes):
     img = Image.open(io.BytesIO(image_bytes))
     if img.mode != 'RGBA':
         img = img.convert('RGBA')
     
-    # Resize logic (Exactly 512 on the longest side)
+    # Telegram Rule: One side must be 512px, the other 512px or less.
     width, height = img.size
     if width > height:
         new_width = 512
@@ -26,7 +26,7 @@ def prepare_sticker(image_bytes):
     img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
     
     out = io.BytesIO()
-    img.save(out, format="PNG")
+    img.save(out, format="PNG") # PNG is mandatory for static stickers
     out.seek(0)
     return out
 
@@ -71,46 +71,65 @@ def register(client):
         status = await event.edit(f"⚡ **Processing...**")
         
         try:
-            # Media download aur resize
+            # 1. Media download aur resize
             media_bytes = await client.download_media(reply, bytes)
             sticker_io = prepare_sticker(media_bytes)
             
-            # User aur Shortname info
+            # 2. Upload and get "InputDocument" by sending to self
+            # Ye step "Sticker file invalid" error ko solve karta hai
+            uploaded_file = await client.upload_file(sticker_io, file_name="sticker.png")
+            
+            # Hum isse 'me' (Saved Messages) me document ki tarah bhej rahe hain sticker attributes ke saath
+            # Isse Telegram is file ko ek valid sticker maan leta hai
+            sent_sticker = await client(functions.messages.SendMediaRequest(
+                peer='me',
+                media=types.InputMediaUploadedDocument(
+                    file=uploaded_file,
+                    mime_type='image/png',
+                    attributes=[types.DocumentAttributeSticker(
+                        alt=emoji,
+                        stickerset=types.InputStickerSetEmpty()
+                    )]
+                ),
+                message=''
+            ))
+            
+            # Sent message se asli document object nikalna
+            raw_doc = sent_sticker.updates[0].message.media.document
+            sticker_doc = types.InputDocument(
+                id=raw_doc.id,
+                access_hash=raw_doc.access_hash,
+                file_reference=raw_doc.file_reference
+            )
+            
+            # Telegram optionally asks for this item
+            sticker_item = types.InputStickerSetItem(document=sticker_doc, emoji=emoji)
+
+            # 3. Pack Logic
             me = await client.get_me()
             username = me.username or f"user{me.id}"
             short_name = await get_pack_short_name(me.id, pack_name_raw)
             
-            # 1. Pehle file upload karke "Document" object lena zaroori hai
-            uploaded_file = await client.upload_file(sticker_io, file_name="sticker.png")
-            media = await client(functions.messages.UploadMediaRequest(
-                peer="me",
-                media=types.InputMediaUploadedDocument(
-                    file=uploaded_file,
-                    mime_type="image/png",
-                    attributes=[types.DocumentAttributeSticker(alt=emoji, stickerset=types.InputStickerSetEmpty())]
-                )
-            ))
-            sticker_doc = types.InputStickerSetItem(document=media.document, emoji=emoji)
-            
             if not short_name:
-                # --- NAYA PACK BANANA ---
-                new_short_name = f"{pack_name_raw.replace(' ', '_')}_{me.id}_by_{username}"
+                # --- CREATE NEW PACK ---
+                # Short name unique hona chahiye: Name_UserID_by_Username
+                unique_short_name = f"{pack_name_raw.replace(' ', '_')}_{me.id}_by_{username}"
                 await status.edit(f"✨ **Creating Pack:** `{pack_name_raw}`...")
                 
                 await client(functions.stickers.CreateStickerSetRequest(
                     user_id=me.id,
                     title=pack_name_raw,
-                    short_name=new_short_name,
-                    stickers=[sticker_doc]
+                    short_name=unique_short_name,
+                    stickers=[sticker_item]
                 ))
-                await save_user_pack(me.id, pack_name_raw, new_short_name)
-                await status.edit(f"✅ **Pack Created!**\n[Open Pack](t.me/add-stickers/{new_short_name})")
+                await save_user_pack(me.id, pack_name_raw, unique_short_name)
+                await status.edit(f"✅ **Pack Created!**\n[Open Pack](t.me/add-stickers/{unique_short_name})")
             else:
-                # --- PURANE PACK ME ADD KARNA ---
+                # --- ADD TO EXISTING PACK ---
                 await status.edit(f"🚀 **Adding to `{pack_name_raw}`...**")
                 await client(functions.stickers.AddStickerToSetRequest(
                     stickerset=types.InputStickerSetShortName(short_name=short_name),
-                    sticker=sticker_doc
+                    sticker=sticker_item
                 ))
                 await status.edit(f"✅ **Sticker Added!**\n[Open Pack](t.me/add-stickers/{short_name})")
 
@@ -125,22 +144,21 @@ def register(client):
             return await event.edit("❌ **Usage:** Reply to the sticker you want to remove.")
         
         reply = await event.get_reply_message()
-        if not reply.sticker:
-            return await event.edit("❌ **Error:** That message is not a sticker.")
+        if not (reply.media and hasattr(reply.media, 'document')):
+            return await event.edit("❌ **Error:** That is not a sticker.")
         
         status = await event.edit("🗑️ **Removing sticker...**")
         
         try:
-            # Sticker ke attribute se uska pack info nikalna
-            sticker_doc = reply.media.document
+            doc = reply.media.document
             await client(functions.stickers.RemoveStickerFromSetRequest(
                 sticker=types.InputDocument(
-                    id=sticker_doc.id,
-                    access_hash=sticker_doc.access_hash,
-                    file_reference=sticker_doc.file_reference
+                    id=doc.id,
+                    access_hash=doc.access_hash,
+                    file_reference=doc.file_reference
                 )
             ))
-            await status.edit("✅ **Sticker Removed Successfully!**\n_Note: It might take a few minutes to disappear from Telegram cache._")
+            await status.edit("✅ **Sticker Removed Successfully!**")
         except Exception as e:
             await status.edit(f"❌ **Failed to remove:** `{str(e)}` ")
 
