@@ -8,6 +8,10 @@ from database import save_user_pack, get_pack_short_name
 
 log = logging.getLogger(__name__)
 
+# --- 🛠️ GLOBAL TRACKER (To prevent duplicates) ---
+# Isse ek hi command do baar execute nahi hogi
+PROCESSED_EVENTS = set()
+
 # --- 🛠️ HELPERS ---
 
 async def safe_edit(event, text, **kwargs):
@@ -41,8 +45,9 @@ def prepare_static_sticker(image_bytes):
         return None
 
 async def refresh_pack(client, short_name):
-    """Force Telegram to refresh the sticker set cache"""
+    """Force Telegram to refresh the sticker set cache instantly"""
     try:
+        # GetStickerSet cache refresh trigger
         await client(functions.messages.GetStickerSetRequest(
             stickerset=types.InputStickerSetShortName(short_name=short_name),
             hash=0
@@ -54,6 +59,9 @@ def register(client):
     # --- 1. KANG COMMAND (.kang [name]) - CREATE ONLY ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.kang(?:\s+([\w\s]+))?(?:\s+(.+))?'))
     async def kang_handler(event):
+        if event.id in PROCESSED_EVENTS: return
+        PROCESSED_EVENTS.add(event.id)
+
         if not event.is_reply:
             return await safe_edit(event, "❌ **Error:** Reply to media to create a pack.")
         
@@ -86,31 +94,31 @@ def register(client):
             me = await client.get_me()
             short_name = f"{pack_name.replace(' ', '_')}_{me.id}_by_{me.username or me.id}"
             
-            pack_data = {
-                "user_id": me.id,
-                "title": pack_name,
-                "short_name": short_name,
-                "stickers": [sticker_item]
-            }
-            if is_anim: pack_data["animated"] = True
-            if is_video: pack_data["videos"] = True
-
-            await client(functions.stickers.CreateStickerSetRequest(**pack_data))
-            await save_user_pack(me.id, pack_name, short_name)
+            # Create Pack
+            await client(functions.stickers.CreateStickerSetRequest(
+                user_id=me.id, title=pack_name, short_name=short_name, stickers=[sticker_item]
+            ))
             
+            await save_user_pack(me.id, pack_name, short_name)
             await safe_edit(status, f"✅ **Pack Created!**\n🔗 https://t.me/addstickers/{short_name}")
+            
+            # Cleanup & Refresh
             await sent_msg.delete()
             await refresh_pack(client, short_name)
 
         except Exception as e:
             if "SHORTNAME_OCCUPIED" in str(e):
-                await safe_edit(status, f"❌ **Error:** Pack `{pack_name}` already exists.\n👉 Use `.add {pack_name}` instead.")
+                await safe_edit(status, f"❌ **Error:** Pack `{pack_name}` already exists.\n👉 Use `.add {pack_name}`.")
             else:
                 await safe_edit(status, f"❌ **Error:** {str(e)}")
 
     # --- 2. ADD COMMAND (.add [name]) - ADD TO EXISTING ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.add(?:\s+([\w\s]+))?(?:\s+(.+))?'))
     async def add_handler(event):
+        # 🔥 DUPLICATE PREVENTION
+        if event.id in PROCESSED_EVENTS: return
+        PROCESSED_EVENTS.add(event.id)
+
         if not event.is_reply:
             return await safe_edit(event, "❌ Reply to media + specify pack name.")
         
@@ -140,7 +148,7 @@ def register(client):
                 sticker_io = io.BytesIO(media_bytes)
                 sticker_io.name = "sticker.tgs" if is_anim else "sticker.webm"
 
-            # One-time Send to extracted document
+            # Background process with auto-delete
             sent_msg = await client.send_file('me', sticker_io, force_document=True)
             doc = sent_msg.media.document
             sticker_item = types.InputStickerSetItem(
@@ -148,14 +156,16 @@ def register(client):
                 emoji=emoji
             )
 
+            # API Call
             await client(functions.stickers.AddStickerToSetRequest(
                 stickerset=types.InputStickerSetShortName(short_name=short_name),
                 sticker=sticker_item
             ))
             
             await safe_edit(status, f"✅ **Added to `{pack_name}`!**\n🔗 https://t.me/addstickers/{short_name}")
+            
+            # Cleanup
             await sent_msg.delete()
-            # Force Refresh
             await refresh_pack(client, short_name)
 
         except Exception as e:
@@ -164,31 +174,35 @@ def register(client):
     # --- 3. DELETE STICKER (.delsticker [name]) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delsticker(?:\s+(.*))?'))
     async def remove_sticker_handler(event):
+        if event.id in PROCESSED_EVENTS: return
+        PROCESSED_EVENTS.add(event.id)
+
         if not event.is_reply: return await safe_edit(event, "❌ Reply to sticker.")
         pack_name = event.pattern_match.group(1) or "Pack"
         
         status = await safe_edit(event, f"🗑️ **Removing from `{pack_name}`...**")
         try:
             reply = await event.get_reply_message()
+            short_name = await get_pack_short_name((await client.get_me()).id, pack_name)
+
             await client(functions.stickers.RemoveStickerFromSetRequest(
                 sticker=types.InputDocument(id=reply.media.document.id, access_hash=reply.media.document.access_hash, file_reference=reply.media.document.file_reference)
             ))
             await safe_edit(status, f"✅ **Sticker removed from `{pack_name}`!**")
-            
-            # Get shortname to refresh
-            me = await client.get_me()
-            sn = await get_pack_short_name(me.id, pack_name)
-            if sn: await refresh_pack(client, sn)
-            
+            if short_name: await refresh_pack(client, short_name)
+
         except Exception as e:
             if "STICKERSET_NOT_MODIFIED" in str(e):
-                await safe_edit(status, f"✅ **Success:** Sticker removed from `{pack_name}`.")
+                await safe_edit(status, f"✅ **Sticker already removed.**")
             else:
                 await safe_edit(status, f"❌ **Failed:** {str(e)}")
 
     # --- 4. DELETE PACK (.delpack [name]) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delpack(?:\s+(.*))?'))
     async def delete_pack_handler(event):
+        if event.id in PROCESSED_EVENTS: return
+        PROCESSED_EVENTS.add(event.id)
+
         pack_arg = event.pattern_match.group(1)
         if not pack_arg: return await safe_edit(event, "❌ Specify Pack Name.")
         
@@ -202,14 +216,12 @@ def register(client):
 
             try:
                 await client(functions.stickers.DeleteStickerSetRequest(stickerset=types.InputStickerSetShortName(short_name=short_name)))
-            except Exception as e:
-                if "INVALID" not in str(e).upper(): raise e
+            except: pass
 
             from database import db
-            if db is not None:
-                await db["sticker_packs"].delete_one({"user_id": me.id, "pack_name": pack_name.lower()})
+            await db["sticker_packs"].delete_one({"user_id": me.id, "pack_name": pack_name.lower()})
             
-            await safe_edit(status, f"🗑️ **Pack `{pack_name}` deleted successfully.**")
+            await safe_edit(status, f"🗑️ **Pack `{pack_name}` deleted.**")
         except Exception as e:
             await safe_edit(status, f"❌ **Failed:** {str(e)}")
 
