@@ -15,6 +15,7 @@ MODULE_MAP = {
     "stickers": "modules.fun.stickers",
     "reaction": "modules.fun.reaction",
     "tagger": "modules.management.tagger",
+    "stealth": "modules.management.stealth",
     "info": "modules.management.info_tools",
     "info_tools": "modules.management.info_tools",
     "group_tools": "modules.management.group_tools",
