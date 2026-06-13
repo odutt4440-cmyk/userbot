@@ -10,21 +10,30 @@ log = logging.getLogger(__name__)
 
 # --- 🛠️ HELPER: RESIZE & CONVERT TO PNG ---
 def prepare_sticker(image_bytes):
-    img = Image.open(io.BytesIO(image_bytes))
-    if img.mode != 'RGBA':
-        img = img.convert('RGBA')
-    width, height = img.size
-    if width > height:
-        new_width = 512
-        new_height = int(512 * (height / width))
-    else:
-        new_height = 512
-        new_width = int(512 * (width / height))
-    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-    out = io.BytesIO()
-    img.save(out, format="PNG")
-    out.seek(0)
-    return out
+    try:
+        if not image_bytes:
+            return None
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+        
+        width, height = img.size
+        if width > height:
+            new_width = 512
+            new_height = int(512 * (height / width))
+        else:
+            new_height = 512
+            new_width = int(512 * (width / height))
+            
+        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        out = io.BytesIO()
+        img.save(out, format="PNG")
+        out.seek(0)
+        return out
+    except Exception as e:
+        log.error(f"Image Prep Error: {e}")
+        return None
 
 # --- 🎨 HELPER: DRAW TEXT FOR MEMIFY ---
 def draw_text(image, top_text, bottom_text):
@@ -67,12 +76,16 @@ def register(client):
         status = await event.edit(f"⚡ **Processing...**")
         
         try:
-            # 1. Image Download & Resize
+            # Media download
             media_bytes = await client.download_media(reply, bytes)
+            if not media_bytes:
+                return await status.edit("❌ **Error:** Could not download media.")
+                
             sticker_io = prepare_sticker(media_bytes)
+            if not sticker_io:
+                return await status.edit("❌ **Error:** Could not process image.")
+
             sticker_io.name = "sticker.png"
-            
-            # Send to self to get document ID
             sent_msg = await client.send_file('me', sticker_io, force_document=True)
             raw_doc = sent_msg.media.document
             sticker_item = types.InputStickerSetItem(
@@ -84,15 +97,11 @@ def register(client):
 
             me = await client.get_me()
             username = me.username or f"user{me.id}"
-            
-            # Pack Shortname Format
             short_name = await get_pack_short_name(me.id, pack_name_raw)
             constructed_short_name = f"{pack_name_raw.replace(' ', '_')}_{me.id}_by_{username}"
             
-            # --- ATTEMPT TO ADD OR CREATE ---
             try:
                 if not short_name:
-                    # Agar DB me nahi hai, pehle create ki koshish karo
                     await status.edit(f"✨ **Creating Pack:** `{pack_name_raw}`...")
                     await client(functions.stickers.CreateStickerSetRequest(
                         user_id=me.id, title=pack_name_raw, short_name=constructed_short_name, stickers=[sticker_item]
@@ -100,7 +109,6 @@ def register(client):
                     await save_user_pack(me.id, pack_name_raw, constructed_short_name)
                     await status.edit(f"✅ **Pack Created!**\n🔗 https://t.me/addstickers/{constructed_short_name}")
                 else:
-                    # Agar DB me hai, direct add karo
                     await status.edit(f"🚀 **Adding to `{pack_name_raw}`...**")
                     await client(functions.stickers.AddStickerToSetRequest(
                         stickerset=types.InputStickerSetShortName(short_name=short_name),
@@ -108,15 +116,18 @@ def register(client):
                     ))
                     await status.edit(f"✅ **Sticker Added!**\n🔗 https://t.me/addstickers/{short_name}")
             
-            except (errors.PeerIdInvalidError, errors.rpcerrorlist.ShortnameOccupiedError, errors.rpcerrorlist.StickersetInvalidError):
-                # 🔥 SYNC LOGIC: Agar Telegram par maujood hai par DB me nahi
-                await status.edit(f"🔄 **Syncing with Telegram...**")
-                await client(functions.stickers.AddStickerToSetRequest(
-                    stickerset=types.InputStickerSetShortName(short_name=constructed_short_name),
-                    sticker=sticker_item
-                ))
-                await save_user_pack(me.id, pack_name_raw, constructed_short_name)
-                await status.edit(f"✅ **Synced & Added!**\n🔗 https://t.me/addstickers/{constructed_short_name}")
+            except Exception as e:
+                # SYNC LOGIC
+                if "SHORTNAME_OCCUPIED" in str(e) or "STICKERSET_INVALID" in str(e):
+                    await status.edit(f"🔄 **Syncing & Adding...**")
+                    await client(functions.stickers.AddStickerToSetRequest(
+                        stickerset=types.InputStickerSetShortName(short_name=constructed_short_name),
+                        sticker=sticker_item
+                    ))
+                    await save_user_pack(me.id, pack_name_raw, constructed_short_name)
+                    await status.edit(f"✅ **Synced!**\n🔗 https://t.me/addstickers/{constructed_short_name}")
+                else:
+                    raise e
 
             await sent_msg.delete()
         except Exception as e:
@@ -124,7 +135,6 @@ def register(client):
             await status.edit(f"❌ **Error:** `{str(e)}` ")
 
     # --- 2. DELETE STICKER (.delsticker) ---
-    # NO PACK NAME NEEDED! Just reply to sticker.
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delsticker$'))
     async def remove_sticker_handler(event):
         if not event.is_reply:
@@ -138,13 +148,14 @@ def register(client):
         
         try:
             doc = reply.media.document
-            # API automatically knows which set it belongs to from the document ID
             await client(functions.stickers.RemoveStickerFromSetRequest(
                 sticker=types.InputDocument(
                     id=doc.id, access_hash=doc.access_hash, file_reference=doc.file_reference
                 )
             ))
             await status.edit("✅ **Sticker Removed Successfully!**")
+        except errors.rpcerrorlist.StickersetNotModifiedError:
+            await status.edit("⚠️ **Sticker already removed or not part of your packs.**")
         except Exception as e:
             await status.edit(f"❌ **Failed:** `{str(e)}` ")
 
@@ -156,20 +167,19 @@ def register(client):
             return await event.edit("❌ **Usage:** `.delpack PackName` ")
         
         pack_name = args.strip()
-        status = await event.edit(f"⚠️ **Deleting `{pack_name}`...**")
+        status = await event.edit(f"⚠️ **Deleting full pack `{pack_name}`...**")
         
         try:
             me = await client.get_me()
             username = me.username or f"user{me.id}"
-            
-            # DB check
             short_name = await get_pack_short_name(me.id, pack_name)
-            # Fallback if DB missing
+            
             if not short_name:
+                # Fallback if DB missing
                 short_name = f"{pack_name.replace(' ', '_')}_{me.id}_by_{username}"
 
-            # API Call
-            await client(functions.stickers.UninstallStickerSetRequest(
+            # API to DELETE the sticker set permanently from Telegram
+            await client(functions.stickers.DeleteStickerSetRequest(
                 stickerset=types.InputStickerSetShortName(short_name=short_name)
             ))
             
@@ -178,26 +188,22 @@ def register(client):
             if db is not None:
                 await db["sticker_packs"].delete_one({"user_id": me.id, "pack_name": pack_name.lower()})
             
-            await status.edit(f"🗑️ **Pack `{pack_name}` deleted successfully from Database & Telegram.**")
+            await status.edit(f"🗑️ **Pack `{pack_name}` deleted successfully.**")
         except Exception as e:
             await status.edit(f"❌ **Failed:** `{str(e)}` ")
 
-    # --- 4. MEMIFY COMMAND (.mm top ; bottom) ---
+    # --- 4. MEMIFY COMMAND ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.mm(?:\s+(.*))?'))
     async def memify_handler(event):
         if not event.is_reply:
-            return await event.edit("❌ **Usage:** Reply to media.\nExample: `.mm TOP ; BOTTOM` ")
-        
+            return await event.edit("❌ **Usage:** Reply to media.")
         text = event.pattern_match.group(1)
         if not text or ";" not in text:
             return await event.edit("❌ **Usage:** `.mm TOP ; BOTTOM` ")
-
         top, bottom = (text.split(";") + [""])[:2]
         status = await event.edit("🎨 **Memifying...**")
-        
         reply = await event.get_reply_message()
         img_data = await client.download_media(reply, bytes)
-        
         try:
             image = Image.open(io.BytesIO(img_data)).convert("RGBA")
             meme_img = draw_text(image, top.strip().upper(), bottom.strip().upper())
@@ -216,9 +222,7 @@ def register(client):
         pack_name = args.strip() if args else "EmpirePack"
         me = await client.get_me()
         username = me.username or f"user{me.id}"
-        
         short_name = await get_pack_short_name(me.id, pack_name)
         if not short_name:
             short_name = f"{pack_name.replace(' ', '_')}_{me.id}_by_{username}"
-            
         await event.edit(f"📦 **Pack:** `{pack_name}`\n🔗 https://t.me/addstickers/{short_name}")
