@@ -8,13 +8,12 @@ from database import save_user_pack, get_pack_short_name
 
 log = logging.getLogger(__name__)
 
-# --- 🛠️ HELPER: RESIZE & CONVERT TO PNG (Strict Telegram Specs) ---
+# --- 🛠️ HELPER: RESIZE & CONVERT TO PNG ---
 def prepare_sticker(image_bytes):
     img = Image.open(io.BytesIO(image_bytes))
     if img.mode != 'RGBA':
         img = img.convert('RGBA')
     
-    # Telegram Rule: One side must be 512px, the other 512px or less.
     width, height = img.size
     if width > height:
         new_width = 512
@@ -26,7 +25,7 @@ def prepare_sticker(image_bytes):
     img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
     
     out = io.BytesIO()
-    img.save(out, format="PNG") # PNG is mandatory for static stickers
+    img.save(out, format="PNG")
     out.seek(0)
     return out
 
@@ -71,38 +70,30 @@ def register(client):
         status = await event.edit(f"⚡ **Processing...**")
         
         try:
-            # 1. Media download aur resize
+            # 1. Download & Resize
             media_bytes = await client.download_media(reply, bytes)
             sticker_io = prepare_sticker(media_bytes)
             
-            # 2. Upload and get "InputDocument" by sending to self
-            # Ye step "Sticker file invalid" error ko solve karta hai
-            uploaded_file = await client.upload_file(sticker_io, file_name="sticker.png")
+            # 2. Get Document ID by sending to self and DELETING
+            # Force Document ensures Telegram treats it as a file/sticker source
+            sticker_io.name = "sticker.png"
+            sent_msg = await client.send_file(
+                'me', 
+                sticker_io, 
+                force_document=True,
+                attributes=[types.DocumentAttributeSticker(
+                    alt=emoji,
+                    stickerset=types.InputStickerSetEmpty()
+                )]
+            )
             
-            # Hum isse 'me' (Saved Messages) me document ki tarah bhej rahe hain sticker attributes ke saath
-            # Isse Telegram is file ko ek valid sticker maan leta hai
-            sent_sticker = await client(functions.messages.SendMediaRequest(
-                peer='me',
-                media=types.InputMediaUploadedDocument(
-                    file=uploaded_file,
-                    mime_type='image/png',
-                    attributes=[types.DocumentAttributeSticker(
-                        alt=emoji,
-                        stickerset=types.InputStickerSetEmpty()
-                    )]
-                ),
-                message=''
-            ))
-            
-            # Sent message se asli document object nikalna
-            raw_doc = sent_sticker.updates[0].message.media.document
+            # Extract logic safely
+            raw_doc = sent_msg.media.document
             sticker_doc = types.InputDocument(
                 id=raw_doc.id,
                 access_hash=raw_doc.access_hash,
                 file_reference=raw_doc.file_reference
             )
-            
-            # Telegram optionally asks for this item
             sticker_item = types.InputStickerSetItem(document=sticker_doc, emoji=emoji)
 
             # 3. Pack Logic
@@ -111,8 +102,7 @@ def register(client):
             short_name = await get_pack_short_name(me.id, pack_name_raw)
             
             if not short_name:
-                # --- CREATE NEW PACK ---
-                # Short name unique hona chahiye: Name_UserID_by_Username
+                # NEW PACK
                 unique_short_name = f"{pack_name_raw.replace(' ', '_')}_{me.id}_by_{username}"
                 await status.edit(f"✨ **Creating Pack:** `{pack_name_raw}`...")
                 
@@ -125,13 +115,16 @@ def register(client):
                 await save_user_pack(me.id, pack_name_raw, unique_short_name)
                 await status.edit(f"✅ **Pack Created!**\n[Open Pack](t.me/add-stickers/{unique_short_name})")
             else:
-                # --- ADD TO EXISTING PACK ---
+                # ADD TO EXISTING
                 await status.edit(f"🚀 **Adding to `{pack_name_raw}`...**")
                 await client(functions.stickers.AddStickerToSetRequest(
                     stickerset=types.InputStickerSetShortName(short_name=short_name),
                     sticker=sticker_item
                 ))
                 await status.edit(f"✅ **Sticker Added!**\n[Open Pack](t.me/add-stickers/{short_name})")
+
+            # 4. Cleanup Saved Messages (Hiding the background process)
+            await sent_msg.delete()
 
         except Exception as e:
             log.error(f"Kang Error: {e}")
@@ -141,7 +134,7 @@ def register(client):
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delsticker$'))
     async def remove_sticker_handler(event):
         if not event.is_reply:
-            return await event.edit("❌ **Usage:** Reply to the sticker you want to remove.")
+            return await event.edit("❌ **Usage:** Reply to the sticker to remove it.")
         
         reply = await event.get_reply_message()
         if not (reply.media and hasattr(reply.media, 'document')):
