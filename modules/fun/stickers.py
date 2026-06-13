@@ -13,8 +13,7 @@ log = logging.getLogger(__name__)
 async def safe_edit(event, text, **kwargs):
     try:
         return await event.edit(text, **kwargs)
-    except Exception as e:
-        log.error(f"Edit Error: {e}")
+    except Exception:
         return event
 
 def prepare_static_sticker(image_bytes):
@@ -67,7 +66,6 @@ def register(client):
         status = await safe_edit(event, f"✨ **Creating Pack `{pack_name}`...**")
         
         try:
-            # Type Detection
             is_anim = reply.file.ext == '.tgs'
             is_video = reply.file.mime_type == 'video/webm'
             
@@ -79,7 +77,6 @@ def register(client):
                 sticker_io = io.BytesIO(media_bytes)
                 sticker_io.name = "sticker.tgs" if is_anim else "sticker.webm"
 
-            # Upload to extract document
             sent_msg = await client.send_file('me', sticker_io, force_document=True)
             doc = sent_msg.media.document
             sticker_item = types.InputStickerSetItem(
@@ -90,12 +87,8 @@ def register(client):
             me = await client.get_me()
             short_name = f"{pack_name.replace(' ', '_')}_{me.id}_by_{me.username or me.id}"
             
-            # 🔥 FIXED: Keywords 'animated' and 'videos' removed to avoid crashes
             await client(functions.stickers.CreateStickerSetRequest(
-                user_id=me.id,
-                title=pack_name,
-                short_name=short_name,
-                stickers=[sticker_item]
+                user_id=me.id, title=pack_name, short_name=short_name, stickers=[sticker_item]
             ))
             
             await save_user_pack(me.id, pack_name, short_name)
@@ -106,7 +99,6 @@ def register(client):
             if "SHORTNAME_OCCUPIED" in str(e):
                 await safe_edit(status, f"❌ **Error:** Pack `{pack_name}` already exists.\n👉 Use `.add {pack_name}` instead.")
             else:
-                log.error(f"Kang Error: {e}")
                 await safe_edit(status, f"❌ **Error:** {str(e)}")
 
     # --- 2. ADD COMMAND (.add [name]) - ADD TO EXISTING ---
@@ -152,19 +144,18 @@ def register(client):
                 stickerset=types.InputStickerSetShortName(short_name=short_name),
                 sticker=sticker_item
             ))
+            
             await safe_edit(status, f"✅ **Added to `{pack_name}`!**\n🔗 https://t.me/addstickers/{short_name}")
             await sent_msg.delete()
 
         except Exception as e:
-            log.error(f"Add Error: {e}")
             await safe_edit(status, f"❌ **Failed:** {str(e)}")
 
     # --- 3. DELETE STICKER (.delsticker [name]) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delsticker(?:\s+(.*))?'))
     async def remove_sticker_handler(event):
-        if not event.is_reply: return await safe_edit(event, "❌ Reply to sticker to remove.")
-        pack_name = event.pattern_match.group(1)
-        if not pack_name: return await safe_edit(event, "❌ Specify Pack Name.")
+        if not event.is_reply: return await safe_edit(event, "❌ Reply to sticker.")
+        pack_name = event.pattern_match.group(1) or "Pack"
         
         status = await safe_edit(event, f"🗑️ **Removing from `{pack_name}`...**")
         try:
@@ -173,7 +164,11 @@ def register(client):
                 sticker=types.InputDocument(id=reply.media.document.id, access_hash=reply.media.document.access_hash, file_reference=reply.media.document.file_reference)
             ))
             await safe_edit(status, f"✅ **Sticker removed from `{pack_name}`!**")
-        except Exception as e: await safe_edit(status, f"❌ **Failed:** {str(e)}")
+        except Exception as e:
+            if "STICKERSET_NOT_MODIFIED" in str(e):
+                await safe_edit(status, f"✅ **Success:** Sticker already removed from `{pack_name}`.")
+            else:
+                await safe_edit(status, f"❌ **Failed:** {str(e)}")
 
     # --- 4. DELETE PACK (.delpack [name]) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delpack(?:\s+(.*))?'))
@@ -189,11 +184,18 @@ def register(client):
             if not short_name:
                 short_name = f"{pack_name.replace(' ', '_')}_{me.id}_by_{me.username or me.id}"
 
-            await client(functions.stickers.DeleteStickerSetRequest(stickerset=types.InputStickerSetShortName(short_name=short_name)))
+            try:
+                await client(functions.stickers.DeleteStickerSetRequest(stickerset=types.InputStickerSetShortName(short_name=short_name)))
+            except Exception as e:
+                if "INVALID" not in str(e).upper(): raise e
+
             from database import db
-            await db["sticker_packs"].delete_one({"user_id": me.id, "pack_name": pack_name.lower()})
-            await safe_edit(status, f"🗑️ **Pack `{pack_name}` deleted.**")
-        except Exception as e: await safe_edit(status, f"❌ **Failed:** {str(e)}")
+            if db is not None:
+                await db["sticker_packs"].delete_one({"user_id": me.id, "pack_name": pack_name.lower()})
+            
+            await safe_edit(status, f"🗑️ **Pack `{pack_name}` deleted successfully.**")
+        except Exception as e:
+            await safe_edit(status, f"❌ **Failed:** {str(e)}")
 
     # --- 5. PACK LINK (.pack [name]) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.pack(?:\s+(.*))?'))
@@ -204,10 +206,10 @@ def register(client):
         if not sn: sn = f"{pack_name.replace(' ', '_')}_{me.id}_by_{me.username or me.id}"
         await safe_edit(event, f"📦 **Pack:** `{pack_name}`\n🔗 https://t.me/addstickers/{sn}")
 
-    # --- 6. MEMIFY (Static Only) ---
+    # --- 6. MEMIFY ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.mm(?:\s+(.*))?'))
     async def memify_handler(event):
-        if not event.is_reply: return await safe_edit(event, "❌ Reply to static photo.")
+        if not event.is_reply: return await safe_edit(event, "❌ Reply to media.")
         text = event.pattern_match.group(1)
         if not text or ";" not in text: return await safe_edit(event, "❌ Usage: `.mm TOP ; BOTTOM` ")
         
@@ -222,4 +224,4 @@ def register(client):
             output.seek(0)
             await client.send_file(event.chat_id, output, reply_to=(await event.get_reply_message()).id)
             await status.delete()
-        except Exception as e: await safe_edit(status, f"❌ Memify failed.")
+        except Exception: await safe_edit(status, f"❌ Memify failed.")
