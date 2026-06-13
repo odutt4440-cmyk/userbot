@@ -176,6 +176,7 @@ async def management_menu(event):
         [Button.inline("👮 Admin Tools", data="mod_admin")],
         [Button.inline("📢 Tagger (TagAll)", data="mod_tagger")],
         [Button.inline("🔍 Info Tools", data="mod_info")],
+        [Button.inline("🕵️ Stealth", data="mod_stealth")],
         [Button.inline("🔙 Back", data="modules_main")]
     ]
     await event.edit(text, buttons=buttons)
