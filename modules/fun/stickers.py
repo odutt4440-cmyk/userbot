@@ -57,11 +57,13 @@ def register(client):
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.kang(?:\s+([\w\s]+))?(?:\s+(.+))?'))
     async def kang_handler(event):
         if not event.is_reply:
-            return await event.edit("❌ **Error:** Reply to a photo/GIF/sticker.\nExample: `.kang MyPack 🔥`")
+            return await event.edit("❌ **Error:** Reply to a photo/GIF/sticker.")
         
         reply = await event.get_reply_message()
         pack_arg = event.pattern_match.group(1)
         emoji = event.pattern_match.group(2) or "⚡"
+        
+        # Consistent Naming
         pack_name_raw = pack_arg.strip() if pack_arg else "EmpirePack"
         
         status = await event.edit(f"⚡ **Processing...**")
@@ -71,7 +73,7 @@ def register(client):
             sticker_io = prepare_sticker(media_bytes)
             sticker_io.name = "sticker.png"
             
-            # Send to self to get document ID (Cleanup logic included)
+            # Use 'me' for background upload and immediate delete
             sent_msg = await client.send_file('me', sticker_io, force_document=True)
             raw_doc = sent_msg.media.document
             sticker_item = types.InputStickerSetItem(
@@ -86,20 +88,24 @@ def register(client):
             short_name = await get_pack_short_name(me.id, pack_name_raw)
             
             if not short_name:
+                # Naya pack shortname formatting
                 unique_short_name = f"{pack_name_raw.replace(' ', '_')}_{me.id}_by_{username}"
                 await status.edit(f"✨ **Creating Pack:** `{pack_name_raw}`...")
+                
                 await client(functions.stickers.CreateStickerSetRequest(
                     user_id=me.id, title=pack_name_raw, short_name=unique_short_name, stickers=[sticker_item]
                 ))
+                # DB Sync
                 await save_user_pack(me.id, pack_name_raw, unique_short_name)
-                await status.edit(f"✅ **Pack Created!**\n🔗 https://t.me/add-stickers/{unique_short_name}")
+                # FIX: 'addstickers' bina hyphen ke Telegram window kholta hai
+                await status.edit(f"✅ **Pack Created!**\n🔗 https://t.me/addstickers/{unique_short_name}")
             else:
                 await status.edit(f"🚀 **Adding to `{pack_name_raw}`...**")
                 await client(functions.stickers.AddStickerToSetRequest(
                     stickerset=types.InputStickerSetShortName(short_name=short_name),
                     sticker=sticker_item
                 ))
-                await status.edit(f"✅ **Sticker Added!**\n🔗 https://t.me/add-stickers/{short_name}")
+                await status.edit(f"✅ **Sticker Added!**\n🔗 https://t.me/addstickers/{short_name}")
 
             await sent_msg.delete()
         except Exception as e:
@@ -110,24 +116,25 @@ def register(client):
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delsticker(?:\s+(.*))?'))
     async def remove_sticker_handler(event):
         if not event.is_reply:
-            return await event.edit("❌ **Usage:** Reply to the sticker and provide pack name.\nExample: `.delsticker MyPack`")
+            return await event.edit("❌ **Usage:** Reply to a sticker and provide pack name.\nExample: `.delsticker detective`")
         
-        pack_name = event.pattern_match.group(1)
-        if not pack_name:
-            return await event.edit("❌ **Error:** Please specify the pack name.\nUsage: `.delsticker PackName` (Reply to sticker)")
+        args = event.pattern_match.group(1)
+        if not args:
+            return await event.edit("❌ **Error:** Specify the pack name.\nUsage: `.delsticker PackName`")
 
+        pack_name = args.strip()
         reply = await event.get_reply_message()
         if not (reply.media and hasattr(reply.media, 'document')):
-            return await event.edit("❌ **Error:** That is not a sticker.")
+            return await event.edit("❌ **Error:** Reply to a valid sticker.")
         
-        status = await event.edit(f"🗑️ **Verifying & Removing from `{pack_name}`...**")
+        status = await event.edit(f"🗑️ **Removing from `{pack_name}`...**")
         
         try:
             me = await client.get_me()
-            short_name = await get_pack_short_name(me.id, pack_name.strip())
+            short_name = await get_pack_short_name(me.id, pack_name)
             
             if not short_name:
-                return await status.edit(f"❌ **Error:** Pack `{pack_name}` not found in your database.")
+                return await status.edit(f"❌ **Error:** Pack `{pack_name}` not found in DB.")
 
             doc = reply.media.document
             await client(functions.stickers.RemoveStickerFromSetRequest(
@@ -137,43 +144,43 @@ def register(client):
             ))
             await status.edit(f"✅ **Sticker Removed from `{pack_name}`!**")
         except Exception as e:
-            await status.edit(f"❌ **Failed to remove:** `{str(e)}` ")
+            await status.edit(f"❌ **Failed:** `{str(e)}` ")
 
     # --- 3. DELETE FULL PACK (.delpack [packname]) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delpack(?:\s+(.*))?'))
     async def delete_full_pack_handler(event):
-        pack_name = event.pattern_match.group(1)
-        if not pack_name:
+        args = event.pattern_match.group(1)
+        if not args:
             return await event.edit("❌ **Usage:** `.delpack PackName` ")
         
-        status = await event.edit(f"⚠️ **Deleting full pack `{pack_name}`...**")
+        pack_name = args.strip()
+        status = await event.edit(f"⚠️ **Deleting `{pack_name}`...**")
         
         try:
             me = await client.get_me()
-            short_name = await get_pack_short_name(me.id, pack_name.strip())
+            short_name = await get_pack_short_name(me.id, pack_name)
             
             if not short_name:
-                return await status.edit(f"❌ **Error:** Pack `{pack_name}` not found in your database.")
+                return await status.edit(f"❌ **Error:** Pack `{pack_name}` not found in DB.")
 
-            # API to delete the sticker set permanently
+            # API Call
             await client(functions.stickers.UninstallStickerSetRequest(
                 stickerset=types.InputStickerSetShortName(short_name=short_name)
             ))
             
-            # Remove from DB
-            from database import pack_db
-            if pack_db is not None:
-                await pack_db.delete_one({"user_id": me.id, "pack_name": pack_name.strip().lower()})
+            # DB Cleanup
+            from database import db
+            await db["sticker_packs"].delete_one({"user_id": me.id, "pack_name": pack_name.lower()})
             
-            await status.edit(f"🗑️ **Pack `{pack_name}` deleted successfully from Telegram and Database.**")
+            await status.edit(f"🗑️ **Pack `{pack_name}` deleted successfully.**")
         except Exception as e:
-            await status.edit(f"❌ **Failed to delete pack:** `{str(e)}` ")
+            await status.edit(f"❌ **Failed:** `{str(e)}` ")
 
     # --- 4. MEMIFY COMMAND (.mm top ; bottom) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.mm(?:\s+(.*))?'))
     async def memify_handler(event):
         if not event.is_reply:
-            return await event.edit("❌ **Usage:** Reply to media.\nExample: `.mm HELLO ; BYE` ")
+            return await event.edit("❌ **Usage:** Reply to media.\nExample: `.mm TOP ; BOTTOM` ")
         
         text = event.pattern_match.group(1)
         if not text or ";" not in text:
@@ -203,6 +210,7 @@ def register(client):
         pack_name = args.strip() if args else "EmpirePack"
         short_name = await get_pack_short_name(event.sender_id, pack_name)
         if short_name:
-            await event.edit(f"📦 **Pack:** `{pack_name}`\n🔗 https://t.me/add-stickers/{short_name}")
+            # FIX: 'addstickers' bina hyphen ke Telegram popup kholta hai
+            await event.edit(f"📦 **Pack:** `{pack_name}`\n🔗 https://t.me/addstickers/{short_name}")
         else:
             await event.edit(f"❌ Pack `{pack_name}` not in DB. Use `.kang` first.")
