@@ -14,15 +14,14 @@ def prepare_sticker(image_bytes):
     if img.mode != 'RGBA':
         img = img.convert('RGBA')
     
-    # Resize logic (Max 512px, maintains aspect ratio)
+    # Resize logic (Exactly 512 on the longest side)
     width, height = img.size
-    aspect = width / height
     if width > height:
         new_width = 512
-        new_height = int(512 / aspect)
+        new_height = int(512 * (height / width))
     else:
         new_height = 512
-        new_width = int(512 * aspect)
+        new_width = int(512 * (width / height))
         
     img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
     
@@ -36,7 +35,6 @@ def draw_text(image, top_text, bottom_text):
     draw = ImageDraw.Draw(image)
     width, height = image.size
     try:
-        # Railway default font path check
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         font = ImageFont.truetype(font_path, int(height/10)) if os.path.exists(font_path) else ImageFont.load_default()
     except:
@@ -59,99 +57,102 @@ def draw_text(image, top_text, bottom_text):
 
 def register(client):
 
-    # --- 1. KANG COMMAND (.kang [packname]) ---
+    # --- 1. KANG COMMAND (.kang [packname] [emoji]) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.kang(?:\s+([\w\s]+))?(?:\s+(.+))?'))
     async def kang_handler(event):
         if not event.is_reply:
-            return await event.edit("❌ **Error:** Reply to a photo/GIF/sticker.\nExample: `.kang MyPack 🔥`")
+            return await event.edit("❌ **Error:** Reply to a photo/GIF/sticker.")
         
         reply = await event.get_reply_message()
-        if not reply.media:
-            return await event.edit("❌ **Error:** No media found in reply.")
-
-        # Args
         pack_arg = event.pattern_match.group(1)
         emoji = event.pattern_match.group(2) or "⚡"
         pack_name_raw = pack_arg.strip() if pack_arg else "EmpirePack"
         
-        status = await event.edit(f"⚡ **Preparing Sticker...**")
+        status = await event.edit(f"⚡ **Processing...**")
         
         try:
-            # Download & Resize
+            # Media download aur resize
             media_bytes = await client.download_media(reply, bytes)
             sticker_io = prepare_sticker(media_bytes)
             
-            # User details for unique short_name
+            # User aur Shortname info
             me = await client.get_me()
-            user_id = me.id
-            username = me.username or f"user{user_id}"
+            username = me.username or f"user{me.id}"
+            short_name = await get_pack_short_name(me.id, pack_name_raw)
             
-            # Database check
-            short_name = await get_pack_short_name(user_id, pack_name_raw)
-            
-            # Upload file
+            # 1. Pehle file upload karke "Document" object lena zaroori hai
             uploaded_file = await client.upload_file(sticker_io, file_name="sticker.png")
+            media = await client(functions.messages.UploadMediaRequest(
+                peer="me",
+                media=types.InputMediaUploadedDocument(
+                    file=uploaded_file,
+                    mime_type="image/png",
+                    attributes=[types.DocumentAttributeSticker(alt=emoji, stickerset=types.InputStickerSetEmpty())]
+                )
+            ))
+            sticker_doc = types.InputStickerSetItem(document=media.document, emoji=emoji)
             
             if not short_name:
-                # --- CREATE NEW PACK ---
-                # Telegram short_name must be unique and end with _by_username
-                new_short_name = f"{pack_name_raw.replace(' ', '_')}_{user_id}_by_{username}"
+                # --- NAYA PACK BANANA ---
+                new_short_name = f"{pack_name_raw.replace(' ', '_')}_{me.id}_by_{username}"
                 await status.edit(f"✨ **Creating Pack:** `{pack_name_raw}`...")
                 
-                try:
-                    await client(functions.stickers.CreateStickerSetRequest(
-                        user_id=user_id,
-                        title=pack_name_raw,
-                        short_name=new_short_name,
-                        stickers=[types.InputStickerSetItem(
-                            document=await client(functions.messages.UploadMediaRequest(
-                                peer="me",
-                                media=types.InputMediaUploadedDocument(
-                                    file=uploaded_file,
-                                    mime_type="image/png",
-                                    attributes=[types.DocumentAttributeSticker(alt=emoji, stickerset=types.InputStickerSetEmpty())]
-                                )
-                            )).document if hasattr(client, 'messages') else uploaded_file, # Logic simplified
-                            emoji=emoji
-                        )]
-                    ))
-                    await save_user_pack(user_id, pack_name_raw, new_short_name)
-                    await status.edit(f"✅ **Pack Created!**\n[Add Stickers](t.me/add-stickers/{new_short_name})")
-                except Exception as e:
-                    await status.edit(f"❌ **Create Error:** {str(e)}")
-            
-            else:
-                # --- ADD TO EXISTING PACK ---
-                await status.edit(f"🚀 **Adding to `{pack_name_raw}`...**")
-                
-                # Fetch Document ID by uploading
-                sticker_media = await client(functions.messages.UploadMediaRequest(
-                    peer="me",
-                    media=types.InputMediaUploadedDocument(
-                        file=uploaded_file,
-                        mime_type="image/png",
-                        attributes=[types.DocumentAttributeSticker(alt=emoji, stickerset=types.InputStickerSetEmpty())]
-                    )
+                await client(functions.stickers.CreateStickerSetRequest(
+                    user_id=me.id,
+                    title=pack_name_raw,
+                    short_name=new_short_name,
+                    stickers=[sticker_doc]
                 ))
-                
+                await save_user_pack(me.id, pack_name_raw, new_short_name)
+                await status.edit(f"✅ **Pack Created!**\n[Open Pack](t.me/add-stickers/{new_short_name})")
+            else:
+                # --- PURANE PACK ME ADD KARNA ---
+                await status.edit(f"🚀 **Adding to `{pack_name_raw}`...**")
                 await client(functions.stickers.AddStickerToSetRequest(
                     stickerset=types.InputStickerSetShortName(short_name=short_name),
-                    sticker=types.InputStickerSetItem(document=sticker_media.document, emoji=emoji)
+                    sticker=sticker_doc
                 ))
-                await status.edit(f"✅ **Sticker Added!**\nPack: [Open Here](t.me/add-stickers/{short_name})")
+                await status.edit(f"✅ **Sticker Added!**\n[Open Pack](t.me/add-stickers/{short_name})")
 
         except Exception as e:
-            await status.edit(f"❌ **Kang Error:** `{str(e)}` ")
+            log.error(f"Kang Error: {e}")
+            await status.edit(f"❌ **Error:** `{str(e)}` ")
 
-    # --- 2. MEMIFY COMMAND (.mm top ; bottom) ---
+    # --- 2. DELETE STICKER (.delsticker) ---
+    @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delsticker$'))
+    async def remove_sticker_handler(event):
+        if not event.is_reply:
+            return await event.edit("❌ **Usage:** Reply to the sticker you want to remove.")
+        
+        reply = await event.get_reply_message()
+        if not reply.sticker:
+            return await event.edit("❌ **Error:** That message is not a sticker.")
+        
+        status = await event.edit("🗑️ **Removing sticker...**")
+        
+        try:
+            # Sticker ke attribute se uska pack info nikalna
+            sticker_doc = reply.media.document
+            await client(functions.stickers.RemoveStickerFromSetRequest(
+                sticker=types.InputDocument(
+                    id=sticker_doc.id,
+                    access_hash=sticker_doc.access_hash,
+                    file_reference=sticker_doc.file_reference
+                )
+            ))
+            await status.edit("✅ **Sticker Removed Successfully!**\n_Note: It might take a few minutes to disappear from Telegram cache._")
+        except Exception as e:
+            await status.edit(f"❌ **Failed to remove:** `{str(e)}` ")
+
+    # --- 3. MEMIFY COMMAND (.mm top ; bottom) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.mm(?:\s+(.*))?'))
     async def memify_handler(event):
         if not event.is_reply:
-            return await event.edit("❌ **Usage:** Reply to media.\nExample: `.mm Hello ; World` ")
+            return await event.edit("❌ **Usage:** Reply to media.\nExample: `.mm HELLO ; BYE` ")
         
         text = event.pattern_match.group(1)
         if not text or ";" not in text:
-            return await event.edit("❌ **Usage:** `.mm TOP TEXT ; BOTTOM TEXT` ")
+            return await event.edit("❌ **Usage:** `.mm TOP ; BOTTOM` ")
 
         top, bottom = (text.split(";") + [""])[:2]
         status = await event.edit("🎨 **Memifying...**")
@@ -161,25 +162,20 @@ def register(client):
         
         try:
             image = Image.open(io.BytesIO(img_data)).convert("RGBA")
-            # Create Meme
             meme_img = draw_text(image, top.strip().upper(), bottom.strip().upper())
-            
-            # Save as Sticker (WebP)
             output = io.BytesIO()
             meme_img.save(output, format="WEBP")
             output.seek(0)
-            
             await client.send_file(event.chat_id, output, reply_to=reply.id)
             await status.delete()
         except Exception as e:
             await status.edit(f"❌ **Memify Error:** `{str(e)}` ")
 
-    # --- 3. PACK LINK (.pack [name]) ---
+    # --- 4. PACK LINK (.pack [name]) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.pack(?:\s+(.*))?'))
     async def pack_handler(event):
         args = event.pattern_match.group(1)
         pack_name = args.strip() if args else "EmpirePack"
-        
         short_name = await get_pack_short_name(event.sender_id, pack_name)
         if short_name:
             await event.edit(f"📦 **Pack:** `{pack_name}`\n🔗 [Link](t.me/add-stickers/{short_name})")
