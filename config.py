@@ -23,6 +23,9 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 LOG_GROUP = int(os.getenv("LOG_GROUP", "0"))
 
 BACKUP_CHAT = int(os.getenv("BACKUP_CHAT", "0"))
+
+UPI_ID = "sparshbaniya@fam"
+PAY_QR = "assets/qr.jpg"
 # --- Sudo Users System ---
 # .env me IDs aise likho: SUDO_USERS=123456 789012 554433 (space dekar)
 sudo_env = os.getenv("SUDO_USERS", "")
