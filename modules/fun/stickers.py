@@ -18,37 +18,36 @@ async def safe_edit(event, text, **kwargs):
 
 def prepare_static_sticker(image_bytes):
     try:
+        if not image_bytes: return None
         img = Image.open(io.BytesIO(image_bytes))
+        if getattr(img, "is_animated", False):
+            img.seek(0)
+            img = img.convert("RGBA")
         if img.mode != 'RGBA': img = img.convert('RGBA')
+        
         width, height = img.size
         if width > height:
             new_width, new_height = 512, int(512 * (height / width))
         else:
             new_height, new_width = 512, int(512 * (width / height))
+            
         img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         out = io.BytesIO()
         img.save(out, format="PNG")
         out.seek(0)
         return out
-    except: return None
+    except Exception as e:
+        log.error(f"Image Prep Error: {e}")
+        return None
 
-def draw_text(image, top_text, bottom_text):
-    draw = ImageDraw.Draw(image)
-    width, height = image.size
+async def refresh_pack(client, short_name):
+    """Force Telegram to refresh the sticker set cache"""
     try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", int(height/10))
-    except: font = ImageFont.load_default()
-    def draw_styled_text(text, pos):
-        draw.text((pos[0]-2, pos[1]-2), text, font=font, fill="black")
-        draw.text((pos[0]+2, pos[1]-2), text, font=font, fill="black")
-        draw.text(pos, text, font=font, fill="white")
-    if top_text:
-        tw = draw.textlength(top_text, font=font) if hasattr(draw, 'textlength') else 100
-        draw_styled_text(top_text, ((width-tw)/2, 10))
-    if bottom_text:
-        tw = draw.textlength(bottom_text, font=font) if hasattr(draw, 'textlength') else 100
-        draw_styled_text(bottom_text, ((width-tw)/2, height - height/8))
-    return image
+        await client(functions.messages.GetStickerSetRequest(
+            stickerset=types.InputStickerSetShortName(short_name=short_name),
+            hash=0
+        ))
+    except: pass
 
 def register(client):
 
@@ -87,13 +86,21 @@ def register(client):
             me = await client.get_me()
             short_name = f"{pack_name.replace(' ', '_')}_{me.id}_by_{me.username or me.id}"
             
-            await client(functions.stickers.CreateStickerSetRequest(
-                user_id=me.id, title=pack_name, short_name=short_name, stickers=[sticker_item]
-            ))
-            
+            pack_data = {
+                "user_id": me.id,
+                "title": pack_name,
+                "short_name": short_name,
+                "stickers": [sticker_item]
+            }
+            if is_anim: pack_data["animated"] = True
+            if is_video: pack_data["videos"] = True
+
+            await client(functions.stickers.CreateStickerSetRequest(**pack_data))
             await save_user_pack(me.id, pack_name, short_name)
-            await safe_edit(status, f"✅ **Pack Created!**\n🔗 https://t.me/addstickers/{short_name}\n👉 Use `.add {pack_name}` for more.")
+            
+            await safe_edit(status, f"✅ **Pack Created!**\n🔗 https://t.me/addstickers/{short_name}")
             await sent_msg.delete()
+            await refresh_pack(client, short_name)
 
         except Exception as e:
             if "SHORTNAME_OCCUPIED" in str(e):
@@ -133,6 +140,7 @@ def register(client):
                 sticker_io = io.BytesIO(media_bytes)
                 sticker_io.name = "sticker.tgs" if is_anim else "sticker.webm"
 
+            # One-time Send to extracted document
             sent_msg = await client.send_file('me', sticker_io, force_document=True)
             doc = sent_msg.media.document
             sticker_item = types.InputStickerSetItem(
@@ -147,6 +155,8 @@ def register(client):
             
             await safe_edit(status, f"✅ **Added to `{pack_name}`!**\n🔗 https://t.me/addstickers/{short_name}")
             await sent_msg.delete()
+            # Force Refresh
+            await refresh_pack(client, short_name)
 
         except Exception as e:
             await safe_edit(status, f"❌ **Failed:** {str(e)}")
@@ -164,9 +174,15 @@ def register(client):
                 sticker=types.InputDocument(id=reply.media.document.id, access_hash=reply.media.document.access_hash, file_reference=reply.media.document.file_reference)
             ))
             await safe_edit(status, f"✅ **Sticker removed from `{pack_name}`!**")
+            
+            # Get shortname to refresh
+            me = await client.get_me()
+            sn = await get_pack_short_name(me.id, pack_name)
+            if sn: await refresh_pack(client, sn)
+            
         except Exception as e:
             if "STICKERSET_NOT_MODIFIED" in str(e):
-                await safe_edit(status, f"✅ **Success:** Sticker already removed from `{pack_name}`.")
+                await safe_edit(status, f"✅ **Success:** Sticker removed from `{pack_name}`.")
             else:
                 await safe_edit(status, f"❌ **Failed:** {str(e)}")
 
@@ -182,7 +198,7 @@ def register(client):
             me = await client.get_me()
             short_name = await get_pack_short_name(me.id, pack_name)
             if not short_name:
-                short_name = f"{pack_name.replace(' ', '_')}_{me.id}_by_{me.username or me.id}"
+                short_name = f"{pack_name.replace(' ', '_').strip()}_{me.id}_by_{me.username or me.id}"
 
             try:
                 await client(functions.stickers.DeleteStickerSetRequest(stickerset=types.InputStickerSetShortName(short_name=short_name)))
