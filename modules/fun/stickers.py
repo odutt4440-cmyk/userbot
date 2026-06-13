@@ -62,18 +62,17 @@ def register(client):
         reply = await event.get_reply_message()
         pack_arg = event.pattern_match.group(1)
         emoji = event.pattern_match.group(2) or "⚡"
-        
-        # Consistent Naming
         pack_name_raw = pack_arg.strip() if pack_arg else "EmpirePack"
         
         status = await event.edit(f"⚡ **Processing...**")
         
         try:
+            # 1. Image Download & Resize
             media_bytes = await client.download_media(reply, bytes)
             sticker_io = prepare_sticker(media_bytes)
             sticker_io.name = "sticker.png"
             
-            # Use 'me' for background upload and immediate delete
+            # Send to self to get document ID
             sent_msg = await client.send_file('me', sticker_io, force_document=True)
             raw_doc = sent_msg.media.document
             sticker_item = types.InputStickerSetItem(
@@ -85,64 +84,67 @@ def register(client):
 
             me = await client.get_me()
             username = me.username or f"user{me.id}"
-            short_name = await get_pack_short_name(me.id, pack_name_raw)
             
-            if not short_name:
-                # Naya pack shortname formatting
-                unique_short_name = f"{pack_name_raw.replace(' ', '_')}_{me.id}_by_{username}"
-                await status.edit(f"✨ **Creating Pack:** `{pack_name_raw}`...")
-                
-                await client(functions.stickers.CreateStickerSetRequest(
-                    user_id=me.id, title=pack_name_raw, short_name=unique_short_name, stickers=[sticker_item]
-                ))
-                # DB Sync
-                await save_user_pack(me.id, pack_name_raw, unique_short_name)
-                # FIX: 'addstickers' bina hyphen ke Telegram window kholta hai
-                await status.edit(f"✅ **Pack Created!**\n🔗 https://t.me/addstickers/{unique_short_name}")
-            else:
-                await status.edit(f"🚀 **Adding to `{pack_name_raw}`...**")
+            # Pack Shortname Format
+            short_name = await get_pack_short_name(me.id, pack_name_raw)
+            constructed_short_name = f"{pack_name_raw.replace(' ', '_')}_{me.id}_by_{username}"
+            
+            # --- ATTEMPT TO ADD OR CREATE ---
+            try:
+                if not short_name:
+                    # Agar DB me nahi hai, pehle create ki koshish karo
+                    await status.edit(f"✨ **Creating Pack:** `{pack_name_raw}`...")
+                    await client(functions.stickers.CreateStickerSetRequest(
+                        user_id=me.id, title=pack_name_raw, short_name=constructed_short_name, stickers=[sticker_item]
+                    ))
+                    await save_user_pack(me.id, pack_name_raw, constructed_short_name)
+                    await status.edit(f"✅ **Pack Created!**\n🔗 https://t.me/addstickers/{constructed_short_name}")
+                else:
+                    # Agar DB me hai, direct add karo
+                    await status.edit(f"🚀 **Adding to `{pack_name_raw}`...**")
+                    await client(functions.stickers.AddStickerToSetRequest(
+                        stickerset=types.InputStickerSetShortName(short_name=short_name),
+                        sticker=sticker_item
+                    ))
+                    await status.edit(f"✅ **Sticker Added!**\n🔗 https://t.me/addstickers/{short_name}")
+            
+            except (errors.PeerIdInvalidError, errors.rpcerrorlist.ShortnameOccupiedError, errors.rpcerrorlist.StickersetInvalidError):
+                # 🔥 SYNC LOGIC: Agar Telegram par maujood hai par DB me nahi
+                await status.edit(f"🔄 **Syncing with Telegram...**")
                 await client(functions.stickers.AddStickerToSetRequest(
-                    stickerset=types.InputStickerSetShortName(short_name=short_name),
+                    stickerset=types.InputStickerSetShortName(short_name=constructed_short_name),
                     sticker=sticker_item
                 ))
-                await status.edit(f"✅ **Sticker Added!**\n🔗 https://t.me/addstickers/{short_name}")
+                await save_user_pack(me.id, pack_name_raw, constructed_short_name)
+                await status.edit(f"✅ **Synced & Added!**\n🔗 https://t.me/addstickers/{constructed_short_name}")
 
             await sent_msg.delete()
         except Exception as e:
             log.error(f"Kang Error: {e}")
             await status.edit(f"❌ **Error:** `{str(e)}` ")
 
-    # --- 2. DELETE STICKER (.delsticker [packname]) ---
-    @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delsticker(?:\s+(.*))?'))
+    # --- 2. DELETE STICKER (.delsticker) ---
+    # NO PACK NAME NEEDED! Just reply to sticker.
+    @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delsticker$'))
     async def remove_sticker_handler(event):
         if not event.is_reply:
-            return await event.edit("❌ **Usage:** Reply to a sticker and provide pack name.\nExample: `.delsticker detective`")
+            return await event.edit("❌ **Usage:** Reply to the sticker you want to remove.")
         
-        args = event.pattern_match.group(1)
-        if not args:
-            return await event.edit("❌ **Error:** Specify the pack name.\nUsage: `.delsticker PackName`")
-
-        pack_name = args.strip()
         reply = await event.get_reply_message()
         if not (reply.media and hasattr(reply.media, 'document')):
-            return await event.edit("❌ **Error:** Reply to a valid sticker.")
+            return await event.edit("❌ **Error:** Reply to a sticker.")
         
-        status = await event.edit(f"🗑️ **Removing from `{pack_name}`...**")
+        status = await event.edit("🗑️ **Removing from Pack...**")
         
         try:
-            me = await client.get_me()
-            short_name = await get_pack_short_name(me.id, pack_name)
-            
-            if not short_name:
-                return await status.edit(f"❌ **Error:** Pack `{pack_name}` not found in DB.")
-
             doc = reply.media.document
+            # API automatically knows which set it belongs to from the document ID
             await client(functions.stickers.RemoveStickerFromSetRequest(
                 sticker=types.InputDocument(
                     id=doc.id, access_hash=doc.access_hash, file_reference=doc.file_reference
                 )
             ))
-            await status.edit(f"✅ **Sticker Removed from `{pack_name}`!**")
+            await status.edit("✅ **Sticker Removed Successfully!**")
         except Exception as e:
             await status.edit(f"❌ **Failed:** `{str(e)}` ")
 
@@ -158,10 +160,13 @@ def register(client):
         
         try:
             me = await client.get_me()
-            short_name = await get_pack_short_name(me.id, pack_name)
+            username = me.username or f"user{me.id}"
             
+            # DB check
+            short_name = await get_pack_short_name(me.id, pack_name)
+            # Fallback if DB missing
             if not short_name:
-                return await status.edit(f"❌ **Error:** Pack `{pack_name}` not found in DB.")
+                short_name = f"{pack_name.replace(' ', '_')}_{me.id}_by_{username}"
 
             # API Call
             await client(functions.stickers.UninstallStickerSetRequest(
@@ -170,9 +175,10 @@ def register(client):
             
             # DB Cleanup
             from database import db
-            await db["sticker_packs"].delete_one({"user_id": me.id, "pack_name": pack_name.lower()})
+            if db is not None:
+                await db["sticker_packs"].delete_one({"user_id": me.id, "pack_name": pack_name.lower()})
             
-            await status.edit(f"🗑️ **Pack `{pack_name}` deleted successfully.**")
+            await status.edit(f"🗑️ **Pack `{pack_name}` deleted successfully from Database & Telegram.**")
         except Exception as e:
             await status.edit(f"❌ **Failed:** `{str(e)}` ")
 
@@ -208,9 +214,11 @@ def register(client):
     async def pack_handler(event):
         args = event.pattern_match.group(1)
         pack_name = args.strip() if args else "EmpirePack"
-        short_name = await get_pack_short_name(event.sender_id, pack_name)
-        if short_name:
-            # FIX: 'addstickers' bina hyphen ke Telegram popup kholta hai
-            await event.edit(f"📦 **Pack:** `{pack_name}`\n🔗 https://t.me/addstickers/{short_name}")
-        else:
-            await event.edit(f"❌ Pack `{pack_name}` not in DB. Use `.kang` first.")
+        me = await client.get_me()
+        username = me.username or f"user{me.id}"
+        
+        short_name = await get_pack_short_name(me.id, pack_name)
+        if not short_name:
+            short_name = f"{pack_name.replace(' ', '_')}_{me.id}_by_{username}"
+            
+        await event.edit(f"📦 **Pack:** `{pack_name}`\n🔗 https://t.me/addstickers/{short_name}")
