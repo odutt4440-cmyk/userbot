@@ -10,4 +10,4 @@ aiohttp
 pillow
 wordfreq
 certifi
-ffmpeg
+
