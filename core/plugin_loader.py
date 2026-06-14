@@ -25,8 +25,13 @@ MODULE_MAP = {
 async def load_all_modules(client, target_module=None):
     """
     Universal Selective Loader: 
-    Automatically handles prefixes like 'activate_', 'mod_', 'force_start_'
+    Automatically handles prefixes and PURGES old handlers to prevent double response.
     """
+    # 🔥 FIX 1: CLEAR OLD HANDLERS (Ghost Killer)
+    # Naye module load hone se pehle purane saare handlers delete karo taaki double rply na aaye
+    client._event_builders.clear()
+    log.info("🧹 Clean Slate: All old handlers purged from memory.")
+
     to_load = []
     
     # 🔥 AUTO-CLEANER: Kisi bhi prefix ko hata kar asli key nikalega
@@ -44,7 +49,7 @@ async def load_all_modules(client, target_module=None):
         main_path = MODULE_MAP.get(target_clean)
         if main_path:
             to_load.append(main_path)
-            # Basic Management Tools hamesha chalu rahenge (Standard user ke liye bhi)
+            # Basic Management Tools hamesha chalu rahenge
             to_load.append(MODULE_MAP["info_tools"])
             to_load.append(MODULE_MAP["group_tools"])
             log.info(f"🎯 Standard Mode: Loading [{target_clean}] + Essentials.")
@@ -52,19 +57,14 @@ async def load_all_modules(client, target_module=None):
             log.error(f"❌ Key '{target_clean}' not found in MODULE_MAP!")
             return
 
-    # 3. Registration
+    # 3. Execution (Single Optimized Loop)
+    # set(to_load) ensures unique paths only
     for module_path in set(to_load):
         try:
+            # 🔥 FIX 2: Reload module to refresh logic
             module = importlib.import_module(module_path)
-            if hasattr(module, 'register'):
-                module.register(client)
-                log.info(f"✅ Registered: {module_path}")
-        except Exception as e:
-            log.error(f"❌ Failed to load {module_path}: {e}")
-    # 3. Execution (Registering unique paths)
-    for module_path in set(to_load):
-        try:
-            module = importlib.import_module(module_path)
+            importlib.reload(module) 
+            
             if hasattr(module, 'register'):
                 module.register(client)
                 log.info(f"✅ Registered: {module_path}")
