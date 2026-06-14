@@ -1,2 +1,5 @@
+[providers]
+python = {}
+
 [phases.setup]
-nixPkgs = ["python311", "ffmpeg"]
+nixPkgs = ["python311", "ffmpeg", "fontconfig", "dejavu-fonts"]
