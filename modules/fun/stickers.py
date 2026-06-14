@@ -45,6 +45,36 @@ def prepare_static_sticker(image_bytes):
         log.error(f"Image Prep Error: {e}")
         return None
 
+async def process_video_to_sticker(client, reply, event_id):
+    """Downloads any video/gif, crops to 3s, removes audio, scales to 512x512 for Telegram Sticker compatibility"""
+    if not is_ffmpeg():
+        return None, "FFMPEG not installed on server."
+        
+    in_f = await client.download_media(reply, f"vid_in_{event_id}")
+    out_f = f"vid_out_{event_id}.webm"
+    
+    try:
+        # FFMPEG Command: Max 3 seconds (-t 3), No Audio (-an), scale to 512x512 with padding, VP9 codec
+        cmd = [
+            "ffmpeg", "-i", in_f,
+            "-t", "3",
+            "-vf", "scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000",
+            "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p",
+            "-an", "-r", "30", "-y", out_f
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+        
+        if os.path.exists(out_f) and os.path.getsize(out_f) > 0:
+            with open(out_f, "rb") as f:
+                res_bytes = f.read()
+            return res_bytes, None
+        return None, "FFMPEG processing failed."
+    except Exception as e:
+        return None, str(e)
+    finally:
+        for f in [in_f, out_f]:
+            if os.path.exists(f): os.remove(f)
+
 async def refresh_pack(client, short_name):
     """Force Telegram to refresh the sticker set cache instantly"""
     try:
@@ -109,15 +139,25 @@ def register(client):
         
         try:
             is_anim = reply.file.ext == '.tgs'
-            is_video = reply.file.mime_type == 'video/webm' or (reply.media and hasattr(reply.media, 'document') and reply.media.document.mime_type == 'video/webm')
-            
-            media_bytes = await client.download_media(reply, bytes)
-            if not is_anim and not is_video:
-                sticker_io = prepare_static_sticker(media_bytes)
-                sticker_io.name = "sticker.png"
+            is_video_raw = reply.file.mime_type == 'video/webm' or (reply.media and hasattr(reply.media, 'document') and reply.media.document.mime_type == 'video/webm')
+            is_other_video = reply.file.mime_type in ['video/mp4', 'image/gif'] or reply.file.ext in ['.mp4', '.gif']
+
+            if is_other_video:
+                await safe_edit(status, "🎬 **Processing video/gif into Sticker format (Max 3s, No Audio)...**")
+                v_bytes, err = await process_video_to_sticker(client, reply, event.id)
+                if err: return await safe_edit(status, f"❌ FFMPEG Error: {err}")
+                sticker_io = io.BytesIO(v_bytes)
+                sticker_io.name = "sticker.webm"
+                is_video = True
             else:
-                sticker_io = io.BytesIO(media_bytes)
-                sticker_io.name = "sticker.tgs" if is_anim else "sticker.webm"
+                media_bytes = await client.download_media(reply, bytes)
+                is_video = is_video_raw
+                if not is_anim and not is_video:
+                    sticker_io = prepare_static_sticker(media_bytes)
+                    sticker_io.name = "sticker.png"
+                else:
+                    sticker_io = io.BytesIO(media_bytes)
+                    sticker_io.name = "sticker.tgs" if is_anim else "sticker.webm"
 
             sent_msg = await client.send_file('me', sticker_io, force_document=True)
             doc = sent_msg.media.document
@@ -170,15 +210,23 @@ def register(client):
                 short_name = f"{pack_name.replace(' ', '_')}_{me.id}_by_{me.username or me.id}"
 
             is_anim = reply.file.ext == '.tgs'
-            is_video = reply.file.mime_type == 'video/webm' or (reply.media and hasattr(reply.media, 'document') and reply.media.document.mime_type == 'video/webm')
-            
-            media_bytes = await client.download_media(reply, bytes)
-            if not is_anim and not is_video:
-                sticker_io = prepare_static_sticker(media_bytes)
-                sticker_io.name = "sticker.png"
+            is_video_raw = reply.file.mime_type == 'video/webm' or (reply.media and hasattr(reply.media, 'document') and reply.media.document.mime_type == 'video/webm')
+            is_other_video = reply.file.mime_type in ['video/mp4', 'image/gif'] or reply.file.ext in ['.mp4', '.gif']
+
+            if is_other_video:
+                await safe_edit(status, "🎬 **Processing video/gif into Sticker format...**")
+                v_bytes, err = await process_video_to_sticker(client, reply, event.id)
+                if err: return await safe_edit(status, f"❌ FFMPEG Error: {err}")
+                sticker_io = io.BytesIO(v_bytes)
+                sticker_io.name = "sticker.webm"
             else:
-                sticker_io = io.BytesIO(media_bytes)
-                sticker_io.name = "sticker.tgs" if is_anim else "sticker.webm"
+                media_bytes = await client.download_media(reply, bytes)
+                if not is_anim and not is_video_raw:
+                    sticker_io = prepare_static_sticker(media_bytes)
+                    sticker_io.name = "sticker.png"
+                else:
+                    sticker_io = io.BytesIO(media_bytes)
+                    sticker_io.name = "sticker.tgs" if is_anim else "sticker.webm"
 
             sent_msg = await client.send_file('me', sticker_io, force_document=True)
             doc = sent_msg.media.document
@@ -229,7 +277,6 @@ def register(client):
 
         except Exception as e:
             err_str = str(e)
-            # Agar sticker pehle hi ud chuka hai ya API delete ke baad invalid bol rahi hai, toh success dikhao
             if any(x in err_str for x in ["STICKERSET_NOT_MODIFIED", "STICKERSET_INVALID", "STICKER_INVALID"]):
                 await safe_edit(status, f"✅ **Sticker removed from `{pack_name}`!**")
                 if 'short_name' in locals() and short_name: 
@@ -316,7 +363,8 @@ def register(client):
                     filters.append(f"drawtext=fontfile='{fpath}':text='{bottom}':fontcolor=white:fontsize=40:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h-40-35")
                 
                 filt = ",".join(filters)
-                cmd = ["ffmpeg", "-i", in_f, "-vf", filt, "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-an", "-y", out_f]
+                # Note: -an hataya nahi hai kyunki sticker format audio support hi nahi karta.
+                cmd = ["ffmpeg", "-i", in_f, "-t", "3", "-vf", filt, "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-an", "-y", out_f]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
                 await client.send_file(
@@ -338,10 +386,9 @@ def register(client):
                 meme_img = draw_text(image, top, bottom)
                 output = io.BytesIO()
                 meme_img.save(output, format="WEBP", method=6)
-                output.name = "sticker.webp"  # 👈 Yeh dena zaroori tha taaki Telegram use normal document na samjhe
+                output.name = "sticker.webp"
                 output.seek(0)
                 
-                # as_sticker=True ke sath explicit sticker attribute add kar diya hai fix ke liye
                 await client.send_file(
                     event.chat_id, 
                     output, 
