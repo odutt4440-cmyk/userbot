@@ -89,7 +89,7 @@ def draw_meme(image, top, bottom):
 
 def register(client):
 
-   @client.on(events.NewMessage(outgoing=True, pattern=r'^\.(kang|add)(?:\s+([\w\s]+))?(?:\s+(.+))?'))
+    @client.on(events.NewMessage(outgoing=True, pattern=r'^\.(kang|add)(?:\s+([\w\s]+))?(?:\s+(.+))?'))
     async def kang_handler(event):
         if event.id in PROCESSED_EVENTS: return
         PROCESSED_EVENTS.add(event.id)
@@ -217,17 +217,17 @@ def register(client):
         
         status = await safe_edit(event, f"🗑️ **Removing from `{pack_name}`...**")
         try:
-        reply = await event.get_reply_message()
-        await client(functions.stickers.RemoveStickerFromSetRequest(
-            sticker=types.InputDocument(id=reply.media.document.id, access_hash=reply.media.document.access_hash, file_reference=reply.media.document.file_reference)
-        ))
-        await safe_edit(status, "✅ **Removed successfully!**")
-    except Exception as e:
-        # Agar sticker pehle hi hat chuka hai toh error na dikhao
-        if "STICKERSET_INVALID" in str(e) or "NOT_MODIFIED" in str(e):
-            await safe_edit(status, "✅ **Sticker deleted.**")
-        else:
-            await safe_edit(status, f"❌ Failed: {str(e)}")
+            reply = await event.get_reply_message()
+            await client(functions.stickers.RemoveStickerFromSetRequest(
+                sticker=types.InputDocument(id=reply.media.document.id, access_hash=reply.media.document.access_hash, file_reference=reply.media.document.file_reference)
+            ))
+            await safe_edit(status, "✅ **Removed successfully!**")
+        except Exception as e:
+            # Agar sticker pehle hi hat chuka hai toh error na dikhao
+            if "STICKERSET_INVALID" in str(e) or "NOT_MODIFIED" in str(e):
+                await safe_edit(status, "✅ **Sticker deleted.**")
+            else:
+                await safe_edit(status, f"❌ Failed: {str(e)}")
 
     # --- 4. DELETE PACK (.delpack [name]) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.delpack(?:\s+(.*))?'))
