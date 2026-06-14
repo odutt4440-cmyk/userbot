@@ -54,7 +54,6 @@ async def process_video_to_sticker(client, reply, event_id):
     out_f = f"vid_out_{event_id}.webm"
     
     try:
-        # FFMPEG Command: Max 3 seconds (-t 3), No Audio (-an), scale to 512x512 with padding, VP9 codec
         cmd = [
             "ffmpeg", "-i", in_f,
             "-t", "3",
@@ -90,33 +89,57 @@ def is_ffmpeg():
 def draw_text(image, top, bottom):
     draw = ImageDraw.Draw(image)
     w, h = image.size
-    fs = int(h / 8) if h > 0 else 40
+    
+    # Base configuration for dynamic text scaling
+    base_fs = int(h / 8) if h > 0 else 40
+    min_fs = 18  # Isse chota nahi hoga font taaki readability bani rahe
     
     font_paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf"
     ]
-    font = None
+    font_path = None
     for path in font_paths:
         if os.path.exists(path):
-            font = ImageFont.truetype(path, fs)
+            font_path = path
             break
-    if not font:
-        font = ImageFont.load_default()
 
-    def draw_t(txt, y):
+    def get_auto_font(txt):
+        if not font_path:
+            return ImageFont.load_default(), base_fs
+            
+        current_fs = base_fs
+        font = ImageFont.truetype(font_path, current_fs)
+        
+        # Loop jab tak text ki width image boundary ke andar fit na aa jaye
+        while current_fs > min_fs:
+            tw = draw.textlength(txt, font=font) if hasattr(draw, 'textlength') else len(txt) * (current_fs * 0.6)
+            if tw < (w - 30):  # 30px padding side boundaries ke liye
+                break
+            current_fs -= 2
+            font = ImageFont.truetype(font_path, current_fs)
+            
+        return font, current_fs
+
+    def draw_t(txt, y, position_top=True):
         if not txt: return
-        tw = draw.textlength(txt, font=font) if hasattr(draw, 'textlength') else len(txt) * (fs * 0.6)
+        font, final_fs = get_auto_font(txt)
+        tw = draw.textlength(txt, font=font) if hasattr(draw, 'textlength') else len(txt) * (final_fs * 0.6)
         x = (w - tw) / 2
+        
+        # Adjust vertical position for bottom text if font gets downscaled
+        final_y = y if position_top else (h - final_fs - 25)
+        
+        # Stroke outline representation
         for o in range(-2, 3):
             for oy in range(-2, 3): 
-                draw.text((x+o, y+oy), txt, font=font, fill="black")
-        draw.text((x, y), txt, font=font, fill="white")
+                draw.text((x+o, final_y+oy), txt, font=font, fill="black")
+        draw.text((x, final_y), txt, font=font, fill="white")
         
     if top:
-        draw_t(top, 15)
+        draw_t(top, 15, position_top=True)
     if bottom:
-        draw_t(bottom, h - fs - 25)
+        draw_t(bottom, h - base_fs - 25, position_top=False)
     return image
 
 def register(client):
@@ -357,13 +380,14 @@ def register(client):
                 out_f = f"mm_out_{event.id}.webm"
                 
                 filters = ["scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000"]
+                
+                # FFMPEG Dynamic Font Scale Logic: Text length ke hisab se scaling evaluate karega (min size limit: 18)
                 if top:
-                    filters.append(f"drawtext=fontfile='{fpath}':text='{top}':fontcolor=white:fontsize=40:borderw=4:bordercolor=black:x=(w-text_w)/2:y=25")
+                    filters.append(f"drawtext=fontfile='{fpath}':text='{top}':fontcolor=white:fontsize='if(lt(tw,w-40),40,max(18,40*(w-40)/tw))':borderw=4:bordercolor=black:x=(w-text_w)/2:y=25")
                 if bottom:
-                    filters.append(f"drawtext=fontfile='{fpath}':text='{bottom}':fontcolor=white:fontsize=40:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h-40-35")
+                    filters.append(f"drawtext=fontfile='{fpath}':text='{bottom}':fontcolor=white:fontsize='if(lt(tw,w-40),40,max(18,40*(w-40)/tw))':borderw=4:bordercolor=black:x=(w-text_w)/2:y=h-40-35")
                 
                 filt = ",".join(filters)
-                # Note: -an hataya nahi hai kyunki sticker format audio support hi nahi karta.
                 cmd = ["ffmpeg", "-i", in_f, "-t", "3", "-vf", filt, "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-an", "-y", out_f]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
