@@ -338,9 +338,17 @@ def register(client):
                 meme_img = draw_text(image, top, bottom)
                 output = io.BytesIO()
                 meme_img.save(output, format="WEBP", method=6)
+                output.name = "sticker.webp"  # 👈 Yeh dena zaroori tha taaki Telegram use normal document na samjhe
                 output.seek(0)
                 
-                await client.send_file(event.chat_id, output, reply_to=reply.id, as_sticker=True)
+                # as_sticker=True ke sath explicit sticker attribute add kar diya hai fix ke liye
+                await client.send_file(
+                    event.chat_id, 
+                    output, 
+                    reply_to=reply.id, 
+                    as_sticker=True,
+                    attributes=[types.DocumentAttributeSticker(alt="⚡", stickerset=types.InputStickerSetEmpty())]
+                )
                 
             await status.delete()
         except Exception as e: 
