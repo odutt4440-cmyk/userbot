@@ -118,10 +118,12 @@ def register(client):
         try:
             me = await client.get_me()
             is_anim = reply.file.ext == '.tgs'
-            is_video = (reply.file.mime_type in ['video/webm', 'video/mp4', 'image/gif']) or (reply.file.ext in ['.webm', '.mp4', '.gif'])
+            is_video = (reply.file.mime_type in ['video/webm', 'video/mp4', 'image/gif']) or (reply.file.ext in ['.webm', '.mp4', '.gif']) or (reply.media and hasattr(reply.media, 'document') and reply.media.document.mime_type == 'video/webm')
             
             media_path = await client.download_media(reply, f"temp_{event.id}")
             sticker_io = io.BytesIO()
+
+            upload_kwargs = {"force_document": True}
 
             if is_anim:
                 with open(media_path, 'rb') as f: sticker_io.write(f.read())
@@ -135,6 +137,11 @@ def register(client):
                     with open(webm_path, 'rb') as f: sticker_io.write(f.read())
                     sticker_io.name = "sticker.webm"
                     if os.path.exists(webm_path): os.remove(webm_path)
+                    # Payload adjustment for video sticker upload compliance
+                    upload_kwargs = {
+                        "mime_type": "video/webm",
+                        "attributes": [types.DocumentAttributeSticker(alt=emoji, stickerset=types.InputStickerSetEmpty())]
+                    }
                 else: 
                     if os.path.exists(media_path): os.remove(media_path)
                     return await safe_edit(status, "❌ Conversion failed.")
@@ -147,7 +154,7 @@ def register(client):
             if os.path.exists(media_path): os.remove(media_path)
             sticker_io.seek(0)
             
-            sent = await client.send_file('me', sticker_io, force_document=True)
+            sent = await client.send_file('me', sticker_io, **upload_kwargs)
             doc = sent.media.document
             sticker_item = types.InputStickerSetItem(
                 document=types.InputDocument(id=doc.id, access_hash=doc.access_hash, file_reference=doc.file_reference), 
@@ -249,7 +256,7 @@ def register(client):
         status = await safe_edit(event, "🎨 **Creating Meme Sticker...**")
         
         try:
-            is_video_sticker = reply.file.mime_type == 'video/webm' or (reply.file.ext == '.webm') or (reply.file.mime_type in ['video/mp4', 'image/gif'])
+            is_video_sticker = reply.file.mime_type == 'video/webm' or (reply.file.ext == '.webm') or (reply.file.mime_type in ['video/mp4', 'image/gif']) or (reply.media and hasattr(reply.media, 'document') and reply.media.document.mime_type == 'video/webm')
             is_anim_tgs = reply.file.ext == '.tgs'
             
             # CASE A: Video/WebM Animated Sticker Modding via FFmpeg
