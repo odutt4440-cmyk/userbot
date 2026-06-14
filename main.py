@@ -24,9 +24,9 @@ async def auto_backup_task():
         await asyncio.sleep(21600) 
         log.info("☁️ Cloud Database is automatically backed up by MongoDB Atlas.")
 
-# --- 🔥 AUTO-RESUME LOGIC (The Saver) ---
+# --- 🔥 AUTO-RESUME LOGIC (Optimized & Staggered) ---
 async def resume_userbots():
-    """Bot restart hote hi purane active users ko resume karega"""
+    """Bot restart hote hi purane active users ko staggered gap ke saath resume karega"""
     from core.session_manager import SessionManager
     
     log.info("🔍 Checking for userbot sessions to resume...")
@@ -36,16 +36,24 @@ async def resume_userbots():
         log.info("ℹ️ No active sessions found to resume.")
         return
 
+    log.info(f"♻️ Found {len(active_users)} sessions. Starting staggered resume...")
+
     for user in active_users:
         user_id = user["user_id"]
-        module = user.get("current_module", "All Modules")
+        # DB me agar data format list hai toh indexing check karein user[3]
+        # Agar dictionary hai toh .get() sahi hai
+        module = user.get("current_module", "All Modules") if isinstance(user, dict) else user[3]
+        
         try:
-            # Background me sessions start karna
-            asyncio.create_task(SessionManager.start_userbot(user_id, module))
-            log.info(f"✅ Auto-Resumed session for user: {user_id} ({module})")
+            # 🚀 Start bot
+            await SessionManager.start_userbot(user_id, module)
+            log.info(f"✅ Auto-Resumed: {user_id} ({module})")
+            
+            # 🔥 CRUCIAL: Agle bot ke liye 15 second ruko taaki RAM spike na ho
+            await asyncio.sleep(15) 
+            
         except Exception as e:
             log.error(f"❌ Failed to resume {user_id}: {e}")
-
 # 3. Plugin Loader Function
 def load_plugins():
     path = "plugins/*.py"
