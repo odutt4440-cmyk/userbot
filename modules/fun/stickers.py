@@ -261,12 +261,11 @@ def register(client):
                 in_f = await client.download_media(reply, f"mm_in_{event.id}.webm")
                 out_f = f"mm_out_{event.id}.webm"
                 
-                # Fixed FFmpeg filter variables and logic
-                filters = ["scale=512:512"]
+                # Fixed FFmpeg filter variables and scaling structure
+                filters = ["scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000"]
                 if top:
                     filters.append(f"drawtext=fontfile='{fpath}':text='{top}':fontcolor=white:fontsize=40:borderw=4:bordercolor=black:x=(w-text_w)/2:y=25")
                 if bottom:
-                    # 'th' replaced with a static 40 for safety to avoid crash
                     filters.append(f"drawtext=fontfile='{fpath}':text='{bottom}':fontcolor=white:fontsize=40:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h-40-35")
                 
                 filt = ",".join(filters)
@@ -274,7 +273,17 @@ def register(client):
                 cmd = ["ffmpeg", "-i", in_f, "-vf", filt, "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-an", "-y", out_f]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
-                await client.send_file(event.chat_id, out_f, reply_to=reply.id, as_sticker=True)
+                # Fixed delivery structure to push payload as native video sticker canvas
+                await client.send_file(
+                    event.chat_id, 
+                    out_f, 
+                    reply_to=reply.id, 
+                    mime_type="video/webm",
+                    attributes=[types.DocumentAttributeSticker(
+                        alt="⚡",
+                        stickerset=types.InputStickerSetEmpty()
+                    )]
+                )
                 for f in [in_f, out_f]: 
                     if os.path.exists(f): os.remove(f)
                     
