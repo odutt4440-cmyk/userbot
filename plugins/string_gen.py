@@ -1,4 +1,5 @@
 import asyncio
+import re
 from bot_instance import bot
 from telethon import events, Button, TelegramClient
 from telethon.sessions import StringSession
@@ -18,7 +19,6 @@ GEN_DATA = {}
 # --- 1. START GENERATION ---
 @bot.on(events.CallbackQuery(data="gen_string_internal"))
 async def start_string_gen(event):
-    # Security: Ensure this only works in DM
     if not event.is_private:
         await event.answer("⚠️ This tool only works in Private DM.", alert=True)
         return
@@ -31,14 +31,13 @@ async def start_string_gen(event):
         "I will help you generate a Telethon String Session securely. "
         "The string will be automatically linked to your account.\n\n"
         "**Step 1:** Please send your **Phone Number** with country code.\n"
-        "Example: `+919876543210`",
+        "Example: `+919876543210` or `+1...`",
         buttons=[Button.inline("❌ Cancel", data="start_back")]
     )
 
 # --- 2. INPUT HANDLER ---
 @bot.on(events.NewMessage)
 async def handle_gen_input(event):
-    # 🛡️ SECURITY FIX: Ignore all group messages
     if not event.is_private:
         return
 
@@ -50,31 +49,57 @@ async def handle_gen_input(event):
     step = state["step"]
     text = event.raw_text.strip()
 
-    # --- STEP 1: RECEIVE PHONE ---
+    # --- STEP 1: RECEIVE PHONE (With International Fix) ---
     if step == "phone":
-        state["phone"] = text
-        msg = await event.reply("⏳ Connecting to Telegram servers...")
+        # 🔥 CLEANER: Remove all spaces, dashes, and brackets
+        clean_phone = re.sub(r'[\s\-()]', '', text)
         
-        tmp_client = TelegramClient(StringSession(), API_ID, API_HASH)
+        # Ensure it starts with + (Telegram strict rule)
+        if not clean_phone.startswith('+'):
+            await event.reply("⚠️ **Format Error:** Please start the number with `+` followed by country code.\nExample: `+1...` or `+91...` ")
+            return
+
+        state["phone"] = clean_phone
+        msg = await event.reply("⏳ Connecting to Telegram secure servers...")
+        
+        # 🔥 DEVICE SIMULATION: Reduces 'High Risk' flags for International OTP
+        tmp_client = TelegramClient(
+            StringSession(), 
+            API_ID, 
+            API_HASH,
+            device_model="iPhone 15 Pro Max",
+            system_version="17.5.1",
+            app_version="10.14.2",
+            lang_code="en",
+            system_lang_code="en-US"
+        )
+        
         await tmp_client.connect()
         
         try:
-            hash_obj = await tmp_client.send_code_request(text)
+            # Code request
+            hash_obj = await tmp_client.send_code_request(clean_phone)
             state["client"] = tmp_client
             state["hash"] = hash_obj.phone_code_hash
             state["step"] = "otp"
             
             await msg.edit(
                 "✅ **OTP Sent Successfully!**\n\n"
-                "Please check your Telegram app and send the code here in this format:\n"
-                "👉 `1 2 3 4 5` (spaces between digits are mandatory)."
+                f"📱 **Target:** `{clean_phone}`\n\n"
+                "**Important:** Check your Telegram App (the official one) for the code first. "
+                "If not there, check SMS.\n\n"
+                "👉 Send code like this: `1 2 3 4 5` (spaces mandatory)."
             )
         except FloodWaitError as f:
-            await msg.edit(f"❌ **Telegram Limit Hit:**\n\nPlease wait for `{f.seconds}` seconds before trying again. This is a Telegram security restriction.")
+            await msg.edit(f"❌ **Telegram Limit Hit:**\nPlease wait for `{f.seconds}` seconds. This is a Telegram security restriction.")
+            await tmp_client.disconnect()
+            del GEN_DATA[user_id]
+        except PhoneNumberInvalidError:
+            await msg.edit("❌ **Invalid Number:** The phone number you entered is not recognized by Telegram.")
             await tmp_client.disconnect()
             del GEN_DATA[user_id]
         except Exception as e:
-            await msg.edit(f"❌ **Error:** `{str(e)}` \nPlease check your number and try /start again.")
+            await msg.edit(f"❌ **Error:** `{str(e)}` \nPlease try again later.")
             await tmp_client.disconnect()
             del GEN_DATA[user_id]
 
@@ -85,7 +110,7 @@ async def handle_gen_input(event):
         phone = state["phone"]
         code_hash = state["hash"]
         
-        msg = await event.reply("⏳ Verifying OTP...")
+        msg = await event.reply("⏳ Verifying security code...")
         
         try:
             await tmp_client.sign_in(phone, otp, phone_code_hash=code_hash)
@@ -98,8 +123,7 @@ async def handle_gen_input(event):
                 "🎯 **Session Successfully Linked!**\n\n"
                 f"📱 **Phone:** `{phone}`\n"
                 f"🔑 **String:** `{string}`\n\n"
-                "✅ Your account is now connected to our SaaS engine. "
-                "You can now activate your userbot modules."
+                "✅ Your account is now connected. You can now activate your userbot modules."
             )
             await msg.edit(success_text, buttons=[[Button.inline("⚙️ Go to Modules", data="modules_main")]])
             await tmp_client.disconnect()
@@ -111,7 +135,7 @@ async def handle_gen_input(event):
         except PhoneCodeInvalidError:
             await msg.edit("❌ **Invalid OTP!**\nPlease make sure you sent the correct code with spaces.")
         except Exception as e:
-            await msg.edit(f"❌ **Auth Error:** `{str(e)}`")
+            await msg.edit(f"❌ **Auth Error:** `{str(e)}` ")
             await tmp_client.disconnect()
             del GEN_DATA[user_id]
 
@@ -137,9 +161,5 @@ async def handle_gen_input(event):
             )
             await tmp_client.disconnect()
             del GEN_DATA[user_id]
-        except FloodWaitError as f:
-            await msg.edit(f"❌ **Too many attempts!**\nTelegram has blocked login attempts for `{f.seconds}` seconds. Please wait and try again later.")
-            await tmp_client.disconnect()
-            del GEN_DATA[user_id]
         except Exception as e:
-            await msg.edit(f"❌ **Password Error:** `{str(e)}` \nPlease try /start again.")
+            await msg.edit(f"❌ **Password Error:** `{str(e)}` \nPlease try again.")
