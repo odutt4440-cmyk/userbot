@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import gc # Garbage Collector
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from config import API_ID, API_HASH, ADMIN_ID
@@ -11,8 +12,7 @@ log = logging.getLogger(__name__)
 # Dictionary format: {user_id: {"client": client_instance, "module": "module_name"}}
 ACTIVE_CLIENTS = {}
 
-# 🔥 INTERNAL SAFETY MAP: Taaki loader kabhi fail na ho
-# Agar DB ya buttons se purana naam aaye toh ye sahi kar dega
+# 🔥 MASTER INTERNAL MAP: Sync with all existing and new modules
 INTERNAL_MAP = {
     "info": "info_tools",
     "info_tools": "info_tools",
@@ -20,113 +20,115 @@ INTERNAL_MAP = {
     "admin": "group_tools",
     "management": "group_tools",
     "clone": "clone",
-    "afk": "afk"
+    "afk": "afk",
+    "stickers": "stickers",
+    "reaction": "reaction",
+    "stealth": "stealth"
 }
 
 class SessionManager:
     @staticmethod
     async def start_userbot(user_id, module_name):
-        """Starts a userbot session with strict Plan enforcement and Name Fixing."""
+        """Starts a userbot session with Turbo Memory Optimization."""
         
-        # 🛡️ 1. Security Check
+        # 🛡️ 1. Security & Subscription
         if not await is_subscribed(user_id):
-            return "❌ Your subscription has expired. Please buy a plan to reactivate."
+            return "❌ Your subscription has expired."
 
-        # 🛡️ 2. Plan Retrieval & Normalization
         plan = await get_user_plan_type(user_id)
         current_plan = str(plan).strip().lower()
-        
-        # Input name ko saaf karo
         trigger_raw = str(module_name).strip().lower()
         is_all_request = trigger_raw in ["all", "all modules", "all_modules", "force_start_all"]
 
-        # 🔥 GUARD: Block Standard users from 'ALL' feature
+        # 🛡️ 2. Plan Enforcement
         if is_all_request and "empire" not in current_plan and user_id != ADMIN_ID:
-            return (
-                "❌ **Access Denied!**\n\n"
-                "Your plan (**Standard**) does not support deploying all modules at once.\n"
-                "👉 Please upgrade to **Empire Plan** (₹35) to unlock this."
-            )
+            return "❌ **Access Denied!**\nUpgrade to **Empire Plan** to load all modules."
         
-        # 🛡️ 3. Existing Session Handling
+        # 🛡️ 3. Instant Instance Check (Zombie Protection)
         if user_id in ACTIVE_CLIENTS:
-            if "empire" not in current_plan and user_id != ADMIN_ID:
-                running_module = ACTIVE_CLIENTS[user_id]["module"]
-                if running_module == trigger_raw.upper() or running_module == INTERNAL_MAP.get(trigger_raw, "").upper():
-                    return f"⚠️ Your userbot is already running the **{running_module}** module."
+            old_client = ACTIVE_CLIENTS[user_id]["client"]
+            if old_client.is_connected():
+                if "empire" not in current_plan and user_id != ADMIN_ID:
+                    running = ACTIVE_CLIENTS[user_id]["module"]
+                    return f"⚠️ **Standard Plan Limit:**\nModule `{running}` is already active. Stop it first."
                 
-                return (
-                    f"⚠️ **Access Denied:** You are on the **Standard Plan**.\n\n"
-                    f"Please stop your running module **[{running_module}]** first."
-                )
-            
-            # For Empire/Admin: Just return if they trigger 'all' again
-            if ("empire" in current_plan or user_id == ADMIN_ID) and is_all_request:
-                return f"✅ **Empire Mode Active:** Your userbot is already running with all modules enabled!"
+                # Empire users ke liye agar 'all' chalu hai toh naya mat chalao
+                if is_all_request and ACTIVE_CLIENTS[user_id]["module"] == "ALL_MODULES":
+                    return "✅ **Empire Mode** is already running with all features."
 
         # 🛡️ 4. Session Retrieval
         string_session = await get_user_session(user_id)
         if not string_session:
-            return "❌ No session found. Please login first."
+            return "❌ Session not found. Login again."
 
-        # 🚀 5. Initialize Telegram Client
+        # 🚀 5. Client Setup (Memory Optimized)
         client = TelegramClient(
             StringSession(string_session), 
             API_ID, 
             API_HASH,
-            sequential_updates=False, 
-            flood_sleep_threshold=240 
+            sequential_updates=True, # Low RAM par True zyada stable hai
+            flood_sleep_threshold=60,
+            device_model="Empire-Userbot v2"
         )
 
         try:
-            await client.connect()
+            # Timeout connect taaki bot hang na ho
+            await asyncio.wait_for(client.connect(), timeout=20)
+            
             if not await client.is_user_authorized():
-                return "❌ Invalid Session! Please generate a new string."
+                return "❌ Invalid Session! Please relogin."
 
-            # 🛠️ 6. SELECTIVE PLUGIN REGISTRATION (With Name Fixing)
-            if "empire" in current_plan or user_id == ADMIN_ID:
-                load_target = "all modules" if is_all_request else INTERNAL_MAP.get(trigger_raw, trigger_raw)
-            else:
-                # Standard user ke liye name fix karke bhejo
-                load_target = INTERNAL_MAP.get(trigger_raw, trigger_raw)
-
-            # Ab loader ko hamesha sahi naam milega (jaise 'info_tools')
+            # 🛠️ 6. Load Modules
+            load_target = "all modules" if is_all_request else INTERNAL_MAP.get(trigger_raw, trigger_raw)
             await load_all_modules(client, target_module=load_target)
 
-            # Store the state
+            # State Management
             display_name = "ALL_MODULES" if is_all_request else load_target.upper()
-            ACTIVE_CLIENTS[user_id] = {
-                "client": client,
-                "module": display_name
-            }
             
-            # 🔥 DATABASE SYNC
+            # Agar purana client memory me hai toh usey disconnect karo
+            if user_id in ACTIVE_CLIENTS:
+                try: await ACTIVE_CLIENTS[user_id]["client"].disconnect()
+                except: pass
+
+            ACTIVE_CLIENTS[user_id] = {"client": client, "module": display_name}
+            
+            # Database Sync
             await set_bot_status(user_id, True, display_name)
             
+            # Run Task
             client.loop.create_task(client.run_until_disconnected())
             
-            log.info(f"🚀 Userbot started for {user_id} | Plan: {plan} | Module: {display_name}")
-            
-            return (
-                f"🚀 **Userbot Activated!**\n\n"
-                f"**Loaded Module:** `{display_name}`\n"
-                f"**Plan Status:** `{plan}`\n"
-                f"**Status:** `Online`"
-            )
+            log.info(f"🚀 Bot Started: {user_id} | Module: {display_name}")
+            return f"✅ **Userbot Online!**\n📦 **Module:** `{display_name}`\n💎 **Plan:** `{plan.upper()}`"
 
+        except asyncio.TimeoutError:
+            return "❌ **Connection Timeout:** Telegram servers are responding slow. Try again."
         except Exception as e:
-            log.error(f"Startup Error for {user_id}: {e}")
-            return f"❌ **Startup Error:** `{str(e)}`"
+            log.error(f"Startup Error: {e}")
+            return f"❌ **Error:** `{str(e)}`"
 
     @staticmethod
     async def stop_userbot(user_id):
-        """Cleanly disconnects the session."""
+        """Cleanly disconnects and PURGES memory."""
         if user_id in ACTIVE_CLIENTS:
             try:
-                await set_bot_status(user_id, False)
-                await ACTIVE_CLIENTS[user_id]["client"].disconnect()
+                client = ACTIVE_CLIENTS[user_id]["client"]
+                
+                # 1. Disconnect
+                if client.is_connected():
+                    await client.disconnect()
+                
+                # 2. Update DB
+                await set_bot_status(user_id, False, None)
+                
+                # 3. Nuke from Dictionary
                 del ACTIVE_CLIENTS[user_id]
-                return "🛑 **Userbot Stopped Successfully.**"
+                
+                # 4. 🔥 FORCE GARBAGE COLLECTION
+                # Ye line Railway ki RAM turant khali karegi
+                gc.collect()
+                
+                return "🛑 **Userbot Stopped & RAM Cleared.**"
             except Exception as e:
-                return f"❌ **Error:** `{e}`"
-        return "⚠️ Not running."
+                return f"❌ **Stop Error:** `{e}`"
+        return "⚠️ Userbot is not running."
