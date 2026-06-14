@@ -24,36 +24,32 @@ async def auto_backup_task():
         await asyncio.sleep(21600) 
         log.info("☁️ Cloud Database is automatically backed up by MongoDB Atlas.")
 
-# --- 🔥 AUTO-RESUME LOGIC (Optimized & Staggered) ---
 async def resume_userbots():
-    """Bot restart hote hi purane active users ko staggered gap ke saath resume karega"""
+    """Bot restart hote hi purane users ko ek-ek karke gap ke saath start karega"""
     from core.session_manager import SessionManager
     
-    log.info("🔍 Checking for userbot sessions to resume...")
+    log.info("🔍 Checking for sessions to resume...")
     active_users = await get_active_userbots()
     
-    if not active_users:
-        log.info("ℹ️ No active sessions found to resume.")
-        return
+    if not active_users: return
 
-    log.info(f"♻️ Found {len(active_users)} sessions. Starting staggered resume...")
+    log.info(f"♻️ Resuming {len(active_users)} sessions with staggered delay...")
 
     for user in active_users:
         user_id = user["user_id"]
-        # DB me agar data format list hai toh indexing check karein user[3]
-        # Agar dictionary hai toh .get() sahi hai
+        # Index check (agar list hai toh 3, agar dict hai toh key)
         module = user.get("current_module", "All Modules") if isinstance(user, dict) else user[3]
         
         try:
-            # 🚀 Start bot
+            # 🔥 Wait for it to finish before starting next
             await SessionManager.start_userbot(user_id, module)
-            log.info(f"✅ Auto-Resumed: {user_id} ({module})")
+            log.info(f"✅ Resumed: {user_id}")
             
-            # 🔥 CRUCIAL: Agle bot ke liye 15 second ruko taaki RAM spike na ho
+            # 🔥 Give server 15 seconds to breathe before next login
             await asyncio.sleep(15) 
             
         except Exception as e:
-            log.error(f"❌ Failed to resume {user_id}: {e}")
+            log.error(f"❌ Resume failed for {user_id}: {e}")
 # 3. Plugin Loader Function
 def load_plugins():
     path = "plugins/*.py"
