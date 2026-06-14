@@ -2,6 +2,7 @@ import asyncio
 import os
 import io
 import logging
+import shutil
 import subprocess
 from PIL import Image, ImageDraw, ImageFont
 from telethon import events, functions, types, errors
@@ -19,6 +20,9 @@ async def safe_edit(event, text, **kwargs):
         return await event.edit(text, **kwargs)
     except Exception:
         return event
+
+def is_ffmpeg_installed():
+    return shutil.which("ffmpeg") is not None
 
 def prepare_static_sticker(image_bytes):
     try:
@@ -42,13 +46,11 @@ def prepare_static_sticker(image_bytes):
 def draw_meme_text(image, top_text, bottom_text):
     draw = ImageDraw.Draw(image)
     width, height = image.size
-    
-    # Larger Dynamic Font Size
+    # Bada Font Size
     font_size = int(height / 7) 
-    if font_size < 25: font_size = 35
+    if font_size < 35: font_size = 40
     
     try:
-        # Standard Bold Fonts
         fpath = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         font = ImageFont.truetype(fpath, font_size) if os.path.exists(fpath) else ImageFont.load_default()
     except:
@@ -56,21 +58,19 @@ def draw_meme_text(image, top_text, bottom_text):
 
     def draw_bold_text(text, y_pos):
         if not text: return
-        # Calculate width
         w = draw.textlength(text, font=font) if hasattr(draw, 'textlength') else 100
         x = (width - w) / 2
-        # Outline (Black) for better visibility
-        outline_range = 3
+        # Outline logic (Bada aur Bold)
+        outline_range = 4
         for ox in range(-outline_range, outline_range + 1):
             for oy in range(-outline_range, outline_range + 1):
                 draw.text((x + ox, y_pos + oy), text, font=font, fill="black")
-        # Main Text (White)
         draw.text((x, y_pos), text, font=font, fill="white")
 
     if top_text:
-        draw_bold_text(top_text, 15)
+        draw_bold_text(top_text, 20)
     if bottom_text:
-        draw_bold_text(bottom_text, height - font_size - 25)
+        draw_bold_text(bottom_text, height - font_size - 30)
     return image
 
 async def refresh_pack(client, short_name):
@@ -165,11 +165,11 @@ def register(client):
             await safe_edit(status, "✅ **Removed!**")
         except Exception as e: await safe_edit(status, f"❌ Failed: {str(e)}")
 
-    # --- 4. MEMIFY COMMAND (Static & Animated Support) ---
+    # --- 4. MEMIFY COMMAND (Static & Animated Fixed) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.mm(?:\s+(.*))?'))
     async def memify_handler(event):
         if not event.is_reply: 
-            return await safe_edit(event, "❌ **Error:** Reply to a photo or sticker.")
+            return await safe_edit(event, "❌ **Error:** Reply to media.")
         
         args = event.pattern_match.group(1)
         if not args or ";" not in args:
@@ -183,33 +183,30 @@ def register(client):
         status = await safe_edit(event, "🎨 **Creating Meme...**")
         
         try:
-            # 1. Check Type
             is_video = reply.file.mime_type == 'video/webm'
             is_anim = reply.file.ext == '.tgs'
 
-            if is_video or is_anim:
-                # --- ANIMATED/VIDEO MEMIFY (Uses ffmpeg) ---
-                # Railway par ffmpeg font path alag ho sakta hai
+            if (is_video or is_anim) and is_ffmpeg_installed():
+                # --- ANIMATED MEMIFY ---
+                input_file = await client.download_media(reply, f"mm_in_{event.id}")
+                output_file = f"mm_out_{event.id}.webm"
                 fpath = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-                input_file = await client.download_media(reply, f"mm_input_{event.id}")
-                output_file = f"mm_output_{event.id}.webm"
-
-                # FFmpeg filter logic
-                filter_str = ""
+                
+                # FFmpeg Command Construction
+                filter_chain = []
                 if top:
-                    filter_str += f"drawtext=fontfile='{fpath}':text='{top}':fontcolor=white:fontsize=40:borderw=2:bordercolor=black:x=(w-text_w)/2:y=10"
+                    filter_chain.append(f"drawtext=fontfile='{fpath}':text='{top}':fontcolor=white:fontsize=45:borderw=3:bordercolor=black:x=(w-text_w)/2:y=20")
                 if bottom:
-                    if filter_str: filter_str += ","
-                    filter_str += f"drawtext=fontfile='{fpath}':text='{bottom}':fontcolor=white:fontsize=40:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-th-10"
-
-                cmd = ["ffmpeg", "-i", input_file, "-vf", filter_str, "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-b:v", "500k", "-y", output_file]
+                    filter_chain.append(f"drawtext=fontfile='{fpath}':text='{bottom}':fontcolor=white:fontsize=45:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h-th-30")
+                
+                cmd = ["ffmpeg", "-i", input_file, "-vf", ",".join(filter_chain), "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-y", output_file]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
                 await client.send_file(event.chat_id, output_file, reply_to=reply.id)
                 for f in [input_file, output_file]:
                     if os.path.exists(f): os.remove(f)
             else:
-                # --- STATIC MEMIFY (Uses Pillow) ---
+                # --- STATIC MEMIFY ---
                 img_data = await client.download_media(reply, bytes)
                 image = Image.open(io.BytesIO(img_data)).convert("RGBA")
                 meme_img = draw_meme_text(image, top, bottom)
@@ -221,7 +218,7 @@ def register(client):
             await status.delete()
         except Exception as e:
             log.error(f"Memify Error: {e}")
-            await safe_edit(status, f"❌ **Memify Failed.**")
+            await safe_edit(status, "❌ **Memify Failed. Ensure FFmpeg is installed.**")
 
     # --- 5. PACK LINK ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.pack(?:\s+(.*))?'))
