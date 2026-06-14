@@ -9,9 +9,9 @@ from core.plugin_loader import load_all_modules
 
 log = logging.getLogger(__name__)
 
-# Dictionary: {user_id: {"client": client, "module": "name"}}
+# Dictionary: {user_id: {"client": client, "module": "name", "task": background_task}}
 ACTIVE_CLIENTS = {}
-# 🔥 USER LOCKS: To prevent multiple simultaneous login attempts for one user
+# USER LOCKS: To prevent race conditions
 USER_LOCKS = {}
 
 INTERNAL_MAP = {
@@ -25,16 +25,15 @@ INTERNAL_MAP = {
 class SessionManager:
     @staticmethod
     async def start_userbot(user_id, module_name):
-        """Starts a userbot with Hard Instance Locking to prevent double response."""
+        """Starts a userbot with Hard Instance Killing to prevent double response."""
         
-        # 1. Lock check: User ko ek waqt me ek hi execution allow karo
         if user_id not in USER_LOCKS:
             USER_LOCKS[user_id] = asyncio.Lock()
         
         async with USER_LOCKS[user_id]:
-            # 🛡️ Security & Plan Check
+            # 🛡️ 1. Plan & Subscription Check
             if not await is_subscribed(user_id):
-                return "❌ Plan Expired."
+                return "❌ Subscription Expired."
 
             plan = await get_user_plan_type(user_id)
             current_plan = str(plan).strip().lower()
@@ -42,28 +41,36 @@ class SessionManager:
             is_all = trigger_raw in ["all", "all modules", "all_modules", "force_start_all"]
 
             if is_all and "empire" not in current_plan and user_id != ADMIN_ID:
-                return "❌ Empire Plan Required for 'All' features."
+                return "❌ Empire Plan Required for this feature."
 
-            # 🛠️ HARD CLEANUP: Agar bot pehle se list me hai, toh usey marna hi padega
+            # 🛠️ 2. HARD CLEANUP (Ghost Killer)
             if user_id in ACTIVE_CLIENTS:
-                log.info(f"♻️ Disconnecting existing zombie bot for {user_id}...")
+                log.info(f"💀 Killing existing zombie bot for {user_id}...")
                 try:
-                    old_client = ACTIVE_CLIENTS[user_id]["client"]
-                    await old_client.disconnect()
-                except: pass
+                    old_data = ACTIVE_CLIENTS[user_id]
+                    # Disconnect client
+                    await old_data["client"].disconnect()
+                    # Cancel the background listening task
+                    if "task" in old_data and old_data["task"]:
+                        old_data["task"].cancel()
+                    
+                    await asyncio.sleep(1) # Gap to release resources
+                except Exception as e:
+                    log.error(f"Cleanup Error: {e}")
+                
                 del ACTIVE_CLIENTS[user_id]
                 gc.collect()
 
-            # 🚀 Session retrieval
+            # 🚀 3. Session Retrieval
             string_session = await get_user_session(user_id)
-            if not string_session: return "❌ No Session Found."
+            if not string_session: return "❌ Session not found."
 
-            # 🚀 Initialize Client (Optimized for Low RAM)
+            # 🚀 4. Client Initialization
             client = TelegramClient(
                 StringSession(string_session), 
                 API_ID, 
                 API_HASH,
-                sequential_updates=True, # Process messages one by one (No Lag)
+                sequential_updates=True, # 🔥 Lag Fix: One by one processing
                 flood_sleep_threshold=60,
                 device_model="Empire-Userbot v2"
             )
@@ -71,26 +78,30 @@ class SessionManager:
             try:
                 await asyncio.wait_for(client.connect(), timeout=30)
                 if not await client.is_user_authorized():
-                    return "❌ Invalid Session. Relogin."
+                    return "❌ Invalid Session. relogin required."
 
-                # Plugin Target
+                # 🔥 Clear any internal handlers before loading new ones
+                client._event_builders.clear()
+
+                # Load Plugins
                 load_target = "all modules" if is_all else INTERNAL_MAP.get(trigger_raw, trigger_raw)
                 await load_all_modules(client, target_module=load_target)
 
                 display_name = "ALL_MODULES" if is_all else load_target.upper()
                 
-                # Double Safety Check
-                if user_id in ACTIVE_CLIENTS:
-                    try: await ACTIVE_CLIENTS[user_id]["client"].disconnect()
-                    except: pass
-
-                ACTIVE_CLIENTS[user_id] = {"client": client, "module": display_name}
+                # 🔥 5. Start Listening Task and Track it
+                task = client.loop.create_task(client.run_until_disconnected())
+                
+                # Final assignment with task tracking
+                ACTIVE_CLIENTS[user_id] = {
+                    "client": client, 
+                    "module": display_name,
+                    "task": task 
+                }
+                
                 await set_bot_status(user_id, True, display_name)
+                log.info(f"🚀 Bot fully online for {user_id}")
                 
-                # Start Background Task
-                client.loop.create_task(client.run_until_disconnected())
-                
-                log.info(f"✅ Bot Successfully Online: {user_id}")
                 return f"🚀 **Userbot Online!**\n📦 **Module:** `{display_name}`"
 
             except Exception as e:
@@ -99,17 +110,20 @@ class SessionManager:
 
     @staticmethod
     async def stop_userbot(user_id):
-        """Strictly kills the process and frees memory."""
+        """Strictly kills the process and cancels all background tasks."""
         if user_id in ACTIVE_CLIENTS:
             try:
-                client = ACTIVE_CLIENTS[user_id]["client"]
-                if client.is_connected():
-                    await client.disconnect()
+                data = ACTIVE_CLIENTS[user_id]
+                # 1. Disconnect
+                await data["client"].disconnect()
+                # 2. Kill Task
+                if "task" in data and data["task"]:
+                    data["task"].cancel()
                 
                 await set_bot_status(user_id, False, None)
                 del ACTIVE_CLIENTS[user_id]
-                gc.collect() # 🔥 Clear RAM
-                return "🛑 **Stopped & Memory Purged.**"
+                gc.collect() 
+                return "🛑 **Userbot Stopped & Tasks Cancelled.**"
             except Exception as e:
                 return f"❌ **Stop Error:** {e}"
-        return "⚠️ Bot was not running."
+        return "⚠️ Userbot not running."
