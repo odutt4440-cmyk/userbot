@@ -71,7 +71,6 @@ def draw_meme(image, top, bottom):
     w, h = image.size
     fs = int(h / 8) if h > 0 else 40
     
-    # Check alternate font paths for linux machines
     font_paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf"
@@ -93,8 +92,10 @@ def draw_meme(image, top, bottom):
                 draw.text((x+o, y+oy), txt, font=font, fill="black")
         draw.text((x, y), txt, font=font, fill="white")
         
-    draw_t(top, 15)
-    draw_t(bottom, h - fs - 25)
+    if top:
+        draw_t(top, 15)
+    if bottom:
+        draw_t(bottom, h - fs - 25)
     return image
 
 def register(client):
@@ -128,7 +129,7 @@ def register(client):
             elif is_video:
                 if not is_ffmpeg(): 
                     if os.path.exists(media_path): os.remove(media_path)
-                    return await safe_edit(status, "❌ FFmpeg runtime environment missing on server. Add nixpacks.toml.")
+                    return await safe_edit(status, "❌ FFmpeg missing on server. Buildpack add karo.")
                 webm_path = f"temp_{event.id}.webm"
                 if await convert_to_webm(media_path, webm_path):
                     with open(webm_path, 'rb') as f: sticker_io.write(f.read())
@@ -160,7 +161,7 @@ def register(client):
                     await client(functions.stickers.CreateStickerSetRequest(user_id=me.id, title=pack_name, short_name=sn, stickers=[sticker_item]))
                     await save_user_pack(me.id, pack_name, sn)
                 except errors.errors.ShortnameOccupiedError:
-                    cmd = "add" # Switch to add mode if workspace already initialized
+                    cmd = "add"
             
             if cmd == "add":
                 await client(functions.stickers.AddStickerToSetRequest(stickerset=types.InputStickerSetShortName(short_name=sn), sticker=sticker_item))
@@ -233,15 +234,22 @@ def register(client):
         if not event.is_reply: return await safe_edit(event, "❌ Reply to a photo or sticker.")
         
         args = event.pattern_match.group(1)
-        if not args or ";" not in args: return await safe_edit(event, "❌ Usage: `.mm Top ; Bottom` ")
+        if not args: return await safe_edit(event, "❌ Usage: `.mm Top ; Bottom` ya sirf `.mm Top` ")
         
-        parts = args.split(";", 1)
-        top, bottom = parts[0].strip().upper(), parts[1].strip().upper()
+        # Safe splitting for handling single text or both texts
+        if ";" in args:
+            parts = args.split(";", 1)
+            top = parts[0].strip().upper()
+            bottom = parts[1].strip().upper()
+        else:
+            top = args.strip().upper()
+            bottom = ""
+            
         reply = await event.get_reply_message()
         status = await safe_edit(event, "🎨 **Creating Meme Sticker...**")
         
         try:
-            is_video_sticker = reply.file.mime_type == 'video/webm' or (reply.file.ext == '.webm')
+            is_video_sticker = reply.file.mime_type == 'video/webm' or (reply.file.ext == '.webm') or (reply.file.mime_type in ['video/mp4', 'image/gif'])
             is_anim_tgs = reply.file.ext == '.tgs'
             
             # CASE A: Video/WebM Animated Sticker Modding via FFmpeg
@@ -253,22 +261,25 @@ def register(client):
                 in_f = await client.download_media(reply, f"mm_in_{event.id}.webm")
                 out_f = f"mm_out_{event.id}.webm"
                 
-                # FFmpeg filters text layout wrapper to match sticker parameters 
-                filt = f"scale=512:512,drawtext=fontfile='{fpath}':text='{top}':fontcolor=white:fontsize=40:borderw=4:bordercolor=black:x=(w-text_w)/2:y=25"
-                if bottom: 
-                    filt += f",drawtext=fontfile='{fpath}':text='{bottom}':fontcolor=white:fontsize=40:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h-th-35"
+                # Fixed FFmpeg filter variables and logic
+                filters = ["scale=512:512"]
+                if top:
+                    filters.append(f"drawtext=fontfile='{fpath}':text='{top}':fontcolor=white:fontsize=40:borderw=4:bordercolor=black:x=(w-text_w)/2:y=25")
+                if bottom:
+                    # 'th' replaced with a static 40 for safety to avoid crash
+                    filters.append(f"drawtext=fontfile='{fpath}':text='{bottom}':fontcolor=white:fontsize=40:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h-40-35")
+                
+                filt = ",".join(filters)
                 
                 cmd = ["ffmpeg", "-i", in_f, "-vf", filt, "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-an", "-y", out_f]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
-                # Sent out natively as Sticker payload
                 await client.send_file(event.chat_id, out_f, reply_to=reply.id, as_sticker=True)
                 for f in [in_f, out_f]: 
                     if os.path.exists(f): os.remove(f)
                     
             # CASE B: Standard Static Images or Fallback TGS Snapshot
             else:
-                # If target is vector .tgs format, extract snapshot context via thumb key to manipulate via PIL
                 img_data = await client.download_media(reply, bytes, thumb=-1 if is_anim_tgs else None)
                 if not img_data:
                     return await safe_edit(status, "❌ Media data context structure unreadable.")
@@ -278,13 +289,11 @@ def register(client):
                 if processed_image:
                     image = Image.open(processed_image).convert("RGBA")
                 
-                # Overlay processing matrix
                 meme_img = draw_meme(image, top, bottom)
                 output = io.BytesIO()
                 meme_img.save(output, format="WEBP", method=6)
                 output.seek(0)
                 
-                # Delivered strictly as an instant WebP sticker object
                 await client.send_file(event.chat_id, output, reply_to=reply.id, as_sticker=True)
                 
             await status.delete()
