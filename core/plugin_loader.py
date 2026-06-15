@@ -15,6 +15,8 @@ MODULE_MAP = {
     "afk": "modules.fun.afk",
     "stickers": "modules.fun.stickers",
     "reaction": "modules.fun.reaction",
+    "extra_fun": "modules.fun.extra",
+    "raid": "modules.fun.raid",
     # Management Category
     "tagger": "modules.management.tagger",
     "stealth": "modules.management.stealth",
