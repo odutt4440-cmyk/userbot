@@ -9,12 +9,14 @@ from database import is_subscribed, global_security_check, get_user_plan_type, g
 # Isse bot ko pata chalega ki kaunsa module kis folder ka hissa hai
 CATEGORY_MAP = {
     "games": ["wordly", "wordseek", "wordchain", "octopus"],
-    "fun": ["clone", "afk", "stickers", "reaction"],
+    "fun": ["clone", "afk", "stickers", "reaction","extra_fun", "raid"],
     "management": ["tagger", "stealth", "group_tools", "info_tools"]
 }
 
 # KEY MAPPING: Buttons se Backend Sync
 NAME_MAP = {
+    "extra_fun": "extra_fun",
+    "raid": "raid",
     "info": "info_tools",
     "group": "group_tools",
     "admin": "group_tools",
