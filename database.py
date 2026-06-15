@@ -34,13 +34,13 @@ reaction_db = None
 
 # --- 🔥 THE FINAL FIXED INITIALIZATION FUNCTION ---
 async def init_db():
-    global db, users_db, subs_db, state_db, banned_db, trials_db, settings_db, sudo_db, afk_db, warn_db
+    global db, users_db, subs_db, state_db, banned_db, trials_db, settings_db, sudo_db, afk_db, warn_db, stealth_db, ai_db, pack_db, reaction_db
     try:
         log.info("Connecting to MongoDB Cloud...")
         # Certifi bundle use karna Railway par SSL error khatam karta hai
         ca = certifi.where()
         
-        # Connection parameters - tlsCAFile is crucial for Railway
+        # Connection parameters
         client = AsyncIOMotorClient(
             MONGO_URL,
             tlsCAFile=ca, 
@@ -51,7 +51,7 @@ async def init_db():
         
         db = client["UserbotCommunity"]
         
-        # Collection Mapping (Assigning to Globals)
+        # Collection Mapping
         users_db = db["users"]
         subs_db = db["subscriptions"]
         state_db = db["game_state"]
@@ -65,11 +65,17 @@ async def init_db():
         ai_db = db["ai_settings"]
         pack_db = db["sticker_packs"]
         reaction_db = db["reaction_settings"]
+
         # Ping check
         await db.command("ping")
         log.info("🚀 MongoDB Cloud Connected Successfully!")
-        # 🔥 Cache load karo startup par
+        
+        # 🔥 Cache load karo startup par (Optimized logic)
         await reload_caches()
+
+    except Exception as e:
+        # Ye block hona ZAROORI hai Python me
+        log.error(f"❌ MongoDB Connection Failed: {e}")
 
 async def reload_caches():
     """DB se data utha kar RAM cache me bharta hai (Optimization)"""
