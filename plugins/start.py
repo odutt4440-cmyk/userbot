@@ -153,28 +153,47 @@ async def modules_cmd(event):
 
 
 
-# --- 3. CATEGORY HANDLERS (Add Empire Button here) ---
 
+# --- 1. MODULES MAIN MENU ---
 async def modules_main_logic(event, edit=False):
-    """Universal logic for modules menu with Global Empire Button"""
     text = (
-        "📂 **Select a Category:**\n\n"
-        "Choose a module to deploy. Empire users can activate all features "
-        "at once using the 'Turbo Deploy' button below."
+        "📂 **𝐌ᴏᴅᴜʟᴇ 𝐂ᴇɴᴛᴇʀ**\n\n"
+        "Deploy your userbot now. Standard users can load single modules, "
+        "while Empire users can deploy **Whole Folder Packs** at once!"
     )
     buttons = [
-        [Button.inline("🚀 Deploy Empire Mode (All Bots)", data="activate_all")], # <--- Yahan add kiya
+        [Button.inline("🚀 𝐄ᴍᴘɪʀᴇ 𝐓ᴜʀʙᴏ 𝐃ᴇᴘʟᴏʏ (𝐅ᴏʟᴅᴇʀ 𝐌ᴏᴅᴇ)", data="empire_packs")],
         [Button.inline("🛡️ Management", data="management_ub"), Button.inline("🥳 Fun Tools", data="fun_ub")],
         [Button.inline("🎮 Game Bots", data="games_ub")],
         [Button.inline("🔙 Back to Menu", data="start_back")]
     ]
+    if edit: await event.edit(text, buttons=buttons)
+    else: await event.respond(text, buttons=buttons)
+
+# --- 2. EMPIRE FOLDER SELECTION MENU ---
+@bot.on(events.CallbackQuery(data="empire_packs"))
+async def empire_packs_menu(event):
+    if not await global_security_check(event): return
     
-    if edit:
-        try:
-            return await event.edit(text, buttons=buttons)
-        except:
-            pass
-    return await event.respond(text, buttons=buttons)
+    # Plan check before showing folders
+    plan = await get_user_plan_type(event.sender_id)
+    if event.sender_id != ADMIN_ID and "empire" not in str(plan).lower():
+        return await event.answer("❌ Empire Plan Required for Folder Mode!", alert=True)
+
+    text = (
+        "👑 **𝐄ᴍᴘɪʀᴇ 𝐅ᴏʟᴅᴇʀ 𝐃ᴇᴘʟᴏʏ**\n\n"
+        "Select a folder pack to deploy all its modules instantly:\n\n"
+        "• **Management:** Tagger + Stealth + Admin Tools\n"
+        "• **Fun Pack:** Raid + Extra Fun + Stickers + Reactions\n"
+        "• **Games Pack:** Wordly + WordSeek + WordChain + Octopus"
+    )
+    buttons = [
+        [Button.inline("🛡️ Management Pack", data="mod_management_pack")],
+        [Button.inline("🥳 Fun Suite Pack", data="mod_fun_pack")],
+        [Button.inline("🎮 Game Master Pack", data="mod_games_pack")],
+        [Button.inline("🔙 Back", data="modules_main")]
+    ]
+    await event.edit(text, buttons=buttons)
 
 
 
@@ -202,7 +221,8 @@ async def management_menu(event):
         "**📢 Tagging Tools:**\n"
         "• `.tagall <msg>` - Mention everyone in the group.\n"
         "• `.stopall` - Stop the active tag process.\n"
-        "• `.tagdelay <sec>` - Set delay (Default 3s)."
+        "• `.tagdelay <sec>` - Set delay (Default 3s).\n"
+        "CHECK /command to view all userbots command."
     )
     buttons = [
         [Button.inline("👮 Admin Tools", data="mod_admin")],
@@ -229,11 +249,13 @@ async def fun_menu(event):
         "• `.mm [text]` — Create memes from stickers.\n\n"
         "🎭 *𝐀ᴜᴛᴏ-𝐑ᴇᴧᴄᴛɪᴏɴ (Target/GC):* \n"
         "• `.autoreact [emoji]` — Reply to someone OR type openly in GC.\n"
-        "• `.stopreact` — Stop auto-reactions in the current chat."
+        "• `.stopreact` — Stop auto-reactions in the current chat.\n"
+        "CHECK /command to view all userbots command."
     )
     buttons = [
-        [Button.inline("👤 Identity Clone", data="mod_clone"), Button.inline("💤 AFK Auto-Reply", data="mod_afk")],
-        [Button.inline("🖼️ Stickers & Memify", data="mod_stickers"), Button.inline("🎭 Auto-Reaction", data="mod_reaction")],
+        [Button.inline("👤 Identity Clone", data="mod_clone"), Button.inline("💤 AFK Reply", data="mod_afk")],
+        [Button.inline("🖼️ Stickers & Meme", data="mod_stickers"), Button.inline("🎭 Auto-React", data="mod_reaction")],
+        [Button.inline("⚔️ Raid Suite", data="mod_raid"), Button.inline("✨ Extra Fun", data="mod_extra_fun")], # 🔥 Naye Buttons
         [Button.inline("🔙 𝐁ᴧᴄᴋ", data="modules_main")]
     ]
     await event.edit(text, buttons=buttons)
@@ -269,7 +291,8 @@ async def games_menu(event):
         "• `spam longest` — Spam longest words\n"
         "• `settime 1 3 onx` — Set Min/Max delay\n"
         "• `status onx` — Check  and status regarding about ban and spam for specific gc\n"
-        "• `status` — Check all active games and status regarding about ban and spam"
+        "• `status` — Check all active games and status regarding about ban and spam\n"
+        "CHECK /command to view all userbots command."
     )
     
     buttons = [
