@@ -3,7 +3,7 @@ import asyncio
 from bot_instance import bot 
 from telethon import events, Button
 from config import START_PIC, ADMIN_ID, LOG_GROUP
-from database import claim_trial, has_claimed_trial, get_setting, set_setting, is_banned, get_ban_info, get_maintenance
+from database import claim_trial, has_claimed_trial, get_setting, set_setting, get_user_plan_type, is_banned, get_ban_info, get_maintenance
 
 BEAR_ASCII = """
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
