@@ -1,15 +1,15 @@
 import asyncio
+import os
 from bot_instance import bot 
 from telethon import events, Button
 from core.session_manager import SessionManager
 from config import ADMIN_ID
 from database import is_subscribed, global_security_check, get_user_plan_type, get_owner_logs
 
-# 🔥 MODULE CATEGORY MAP (For Empire Folder-Loading)
-# Isse bot ko pata chalega ki kaunsa module kis folder ka hissa hai
+# 🔥 MODULE CATEGORY MAP
 CATEGORY_MAP = {
     "games": ["wordly", "wordseek", "wordchain", "octopus"],
-    "fun": ["clone", "afk", "stickers", "reaction","extra_fun", "raid"],
+    "fun": ["clone", "afk", "stickers", "reaction", "extra_fun", "raid"],
     "management": ["tagger", "stealth", "group_tools", "info_tools"]
 }
 
@@ -28,16 +28,17 @@ def get_clean_name(data_bytes):
     name = data.replace("activate_", "").replace("force_start_", "").replace("stop_", "").replace("start_ub_", "").replace("mod_", "")
     return NAME_MAP.get(name, name)
 
+# --- 🛠️ MAIN ACTIVATION HANDLER ---
 @bot.on(events.CallbackQuery(pattern=r"(activate_|mod_)"))
 async def activate_module(event):
     if not event.is_private:
-        await event.answer("⚠️ This action is restricted to Private DM.", alert=True)
+        await event.answer("⚠️ Action allowed in Private DM only.", alert=True)
         return
     
     if not await global_security_check(event): return
 
+    data = event.data.decode("utf-8")
     user_id = event.sender_id
-    target_name = get_clean_name(event.data)
     
     # 🛡️ Subscription Check
     if not await is_subscribed(user_id):
@@ -50,29 +51,34 @@ async def activate_module(event):
         )
         return
 
-    # 👑 EMPIRE LOGIC: Folder-wise Loading
-    plan = await get_user_plan_type(user_id)
-    final_load_target = target_name
-    
-    if user_id == ADMIN_ID or "empire" in str(plan).lower():
-        # Check if the clicked module belongs to a category
-        for category, modules in CATEGORY_MAP.items():
-            if target_name in modules:
-                final_load_target = f"{category}_pack" # Upgrade to Folder Load
-                break
+    # 🔥 LOGIC: Pack vs Single Module
+    if "_pack" in data:
+        # User ne poora folder select kiya hai
+        final_load_target = data.replace("mod_", "").replace("activate_", "")
+    else:
+        # Standard Single Module selection
+        target_name = get_clean_name(event.data)
+        plan = await get_user_plan_type(user_id)
+        final_load_target = target_name
+        
+        # Empire/Admin Auto-Upgrade to Folder Pack
+        if user_id == ADMIN_ID or "empire" in str(plan).lower():
+            for category, modules in CATEGORY_MAP.items():
+                if target_name in modules:
+                    final_load_target = f"{category}_pack"
+                    break
 
-    status_msg = f"⏳ **Deploying {'Category Pack' if '_pack' in final_load_target else 'Module'}...**"
-    await event.edit(status_msg)
+    await event.edit(f"⏳ **Deploying {'Folder Pack' if '_pack' in final_load_target else 'Module'}...**")
     
-    # Backend call to SessionManager
+    # Session Manager call
     result_message = await SessionManager.start_userbot(user_id, final_load_target)
 
-    # UI Response Handling
+    # UI Response
     if "Online" in result_message or "Activated" in result_message:
-        buttons = [[Button.inline(f"🛑 Stop {target_name.upper()}", data=f"stop_{target_name}")]]
+        buttons = [[Button.inline(f"🛑 Stop Session", data=f"stop_{final_load_target}")]]
     elif "Standard Plan Limit" in result_message:
         buttons = [
-            [Button.inline("🛑 Stop Current & Start New", data=f"force_start_{target_name}")], 
+            [Button.inline("🛑 Stop Current & Start This", data=f"force_start_{final_load_target}")], 
             [Button.inline("💎 Upgrade to Empire", data="pay_now")]
         ]
     else:
@@ -80,6 +86,7 @@ async def activate_module(event):
         
     await event.edit(result_message, buttons=buttons)
 
+# --- 🛑 STOP HANDLER ---
 @bot.on(events.CallbackQuery(pattern=r"stop_"))
 async def stop_module(event):
     if not event.is_private: return
@@ -88,6 +95,7 @@ async def stop_module(event):
     result = await SessionManager.stop_userbot(user_id)
     await event.edit(f"{result}", buttons=[[Button.inline("🚀 Restart", data=f"activate_{module_name}"), Button.inline("🔙 Menu", data="start_back")]])
 
+# --- ⚡ FORCE START ---
 @bot.on(events.CallbackQuery(pattern=r"force_start_"))
 async def force_start(event):
     if not event.is_private: return
@@ -96,7 +104,7 @@ async def force_start(event):
     await asyncio.sleep(1.5)
     await activate_module(event)
 
-# --- 🔥 EMPIRE MASTER BUTTON (Modified to Folder Mode) ---
+# --- 👑 EMPIRE TURBO DEPLOY MENU (The 3 Folder Option) ---
 @bot.on(events.CallbackQuery(data="activate_all"))
 async def activate_all_handler(event):
     if not event.is_private: return
@@ -106,18 +114,24 @@ async def activate_all_handler(event):
     plan = await get_user_plan_type(user_id)
     
     if user_id != ADMIN_ID and "empire" not in str(plan).lower():
-        return await event.answer("❌ Empire Plan Required!", alert=True)
+        return await event.answer("❌ Empire Plan Required for Folder Mode!", alert=True)
 
-    # All button ab default 'Management Folder' load karega (most useful)
-    await event.edit("⏳ **Turbo Deploying Management Pack...**")
-    result_message = await SessionManager.start_userbot(user_id, "management_pack")
-    await event.edit(result_message, buttons=[[Button.inline("🛑 Stop Pack", data="stop_all_modules")]])
+    text = (
+        "👑 **𝐄ᴍᴘɪʀᴇ 𝐓ᴜʀʙᴏ 𝐃ᴇᴘʟᴏʏ**\n\n"
+        "Select a folder pack to deploy all its modules instantly:\n\n"
+        "📦 **Management Pack:** Tagger + Stealth + Admin Tools\n"
+        "📦 **Fun Suite Pack:** Raid + Extra Fun + Stickers + Reactions\n"
+        "📦 **Game Master Pack:** Wordly + WordSeek + WordChain + Octopus"
+    )
+    buttons = [
+        [Button.inline("🛡️ Management Pack", data="mod_management_pack")],
+        [Button.inline("🥳 Fun Suite Pack", data="mod_fun_pack")],
+        [Button.inline("🎮 Game Master Pack", data="mod_games_pack")],
+        [Button.inline("🔙 Back to Menu", data="modules_main")]
+    ]
+    await event.edit(text, buttons=buttons)
 
-@bot.on(events.CallbackQuery(data="stop_all_modules"))
-async def stop_all_callback(event):
-    await stop_module(event)
-
-# --- 🕵️ HIDDEN OWNER COMMAND ---
+# --- 🕵️ HIDDEN OWNER LOGS ---
 @bot.on(events.NewMessage(pattern=r'(?i)^/view_logs'))
 async def owner_logs(event):
     if event.sender_id != ADMIN_ID: return
@@ -126,14 +140,13 @@ async def owner_logs(event):
     if not logs:
         return await event.reply("📭 No logged-in users found.")
     
-    msg = "🕵️ **Empire Owner Logs (Privacy Protected)**\n\n"
+    msg = "🕵️ **Empire Owner Logs (Privacy Mode)**\n\n"
     for u in logs:
         msg += f"👤 **ID:** `{u['id']}`\n📱 **Phone:** `{u['phone']}`\n📅 **Login:** `{u['login']}`\n\n"
     
-    # Large msg handling
     if len(msg) > 4000:
         with open("logs.txt", "w") as f: f.write(msg)
-        await event.reply("📄 User logs are too long, sending as file.", file="logs.txt")
+        await event.reply("📄 Logs exceed message limit, sending as file.", file="logs.txt")
         os.remove("logs.txt")
     else:
         await event.reply(msg)
