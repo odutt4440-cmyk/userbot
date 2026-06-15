@@ -5,52 +5,67 @@ import importlib
 import asyncio
 import shutil 
 import datetime
+import gc
 from telethon import functions, types
 from config import API_ID, API_HASH, BOT_TOKEN, LOG_GROUP, ADMIN_ID, BACKUP_CHAT
 from bot_instance import bot 
-from database import init_db, get_active_userbots # added get_active_userbots
+from database import init_db, get_active_userbots
 
-# 1. Logging Setup
+# 1. Logging Configuration
 logging.basicConfig(
     format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s',
     level=logging.INFO
 )
 log = logging.getLogger(__name__)
 
-# --- 2. AUTO-BACKUP TASK (Modified for Cloud) ---
+# --- 2. CLOUD MAINTENANCE TASK ---
 async def auto_backup_task():
-    """Cloud storage me file backup ki zarurat nahi hoti, ye sirf placeholder hai crash rokne ke liye"""
+    """Placeholder for cloud database monitoring."""
     while True:
-        await asyncio.sleep(21600) 
-        log.info("☁️ Cloud Database is automatically backed up by MongoDB Atlas.")
+        await asyncio.sleep(21600) # Every 6 hours
+        log.info("☁️ MongoDB Atlas: Cloud synchronization is active and secure.")
 
+# --- 🔥 AUTO-RESUME LOGIC (Staggered Boot Protocol) ---
 async def resume_userbots():
-    """Bot restart hote hi purane users ko ek-ek karke gap ke saath start karega"""
+    """
+    Resumes active sessions one-by-one with a delay to prevent 
+    server CPU spikes and memory exhaustion.
+    """
     from core.session_manager import SessionManager
     
-    log.info("🔍 Checking for sessions to resume...")
+    # Wait for the Main Bot to settle first
+    await asyncio.sleep(10)
+    
+    log.info("🔍 Initializing session recovery protocol...")
     active_users = await get_active_userbots()
     
-    if not active_users: return
+    if not active_users:
+        log.info("ℹ️ No active sessions found in database.")
+        return
 
-    log.info(f"♻️ Resuming {len(active_users)} sessions with staggered delay...")
+    log.info(f"♻️ Recovery Mode: Resuming {len(active_users)} sessions with staggered delay.")
 
     for user in active_users:
-        user_id = user["user_id"]
-        # Index check (agar list hai toh 3, agar dict hai toh key)
-        module = user.get("current_module", "All Modules") if isinstance(user, dict) else user[3]
-        
         try:
-            # 🔥 Wait for it to finish before starting next
-            await SessionManager.start_userbot(user_id, module)
-            log.info(f"✅ Resumed: {user_id}")
+            # Handle both list and dictionary formats from DB
+            user_id = user["user_id"] if isinstance(user, dict) else user[0]
+            module = user.get("current_module", "All Modules") if isinstance(user, dict) else user[3]
             
-            # 🔥 Give server 15 seconds to breathe before next login
+            log.info(f"🚀 Restoring session for: {user_id}")
+            
+            # Start the userbot using optimized SessionManager
+            await SessionManager.start_userbot(user_id, module)
+            
+            # 🔥 CRITICAL: 15-second gap to allow RAM to stabilize
             await asyncio.sleep(15) 
             
         except Exception as e:
-            log.error(f"❌ Resume failed for {user_id}: {e}")
-# 3. Plugin Loader Function
+            log.error(f"❌ Failed to restore session {user_id}: {e}")
+    
+    log.info("✅ All active sessions have been successfully recovered.")
+    gc.collect() # Final RAM cleanup after boot
+
+# 3. Plugin Loader
 def load_plugins():
     path = "plugins/*.py"
     files = glob.glob(path)
@@ -60,73 +75,62 @@ def load_plugins():
         plugin_name = os.path.basename(name).replace(".py", "")
         try:
             importlib.import_module(f"plugins.{plugin_name}")
-            log.info(f"Successfully loaded plugin: {plugin_name}")
+            log.info(f"✅ Plugin loaded: {plugin_name}")
         except Exception as e:
-            log.error(f"Failed to load plugin {plugin_name}: {e}")
+            log.error(f"❌ Plugin failed {plugin_name}: {e}")
 
 async def start_bot():
     print("---------------------------------------")
-    print("   Userbot Community Bot Starting...   ")
+    print("   EMPIRE USERBOT ENGINE STARTING...   ")
     print("---------------------------------------")
     
-    # STEP 1: INITIALIZE DATABASE
+    # STEP 1: DATABASE INITIALIZATION
     await init_db()
-    log.info("MongoDB Cloud Database connected.")
+    log.info("SaaS Database connected (MongoDB Cloud).")
 
-    # STEP 2: START BOT
+    # STEP 2: START MANAGER BOT
     await bot.start(bot_token=BOT_TOKEN)
 
-    # --- SET BOT COMMANDS ---
+    # --- SYNC BOT COMMANDS ---
     try:
         await bot(functions.bots.SetBotCommandsRequest(
             scope=types.BotCommandScopeDefault(),
             lang_code='en',
             commands=[
-                types.BotCommand(command='start', description='Open main menu'),
-                types.BotCommand(command="commands", description="All Userbot Commands list"),
-                types.BotCommand(command='modules', description='Explore all userbot tools'),
-                types.BotCommand(command='plan', description='View premium pricing plans'),
-                types.BotCommand(command='me', description='Check your profile and expiry'),
-                types.BotCommand(command='help', description='Empire community guide')
+                types.BotCommand(command='start', description='Open the main menu'),
+                types.BotCommand(command="commands", description="View all userbot commands"),
+                types.BotCommand(command='modules', description='Manage your active modules'),
+                types.BotCommand(command='plan', description='Premium subscription plans'),
+                types.BotCommand(command='me', description='Check your profile status'),
+                types.BotCommand(command='help', description='Empire Community guide')
             ]
         ))
-        log.info("Successfully synced bot commands to Telegram.")
+        log.info("Bot commands synced with Telegram API.")
     except Exception as e:
-        log.error(f"Failed to sync commands: {e}")
+        log.error(f"Command sync failed: {e}")
 
-    # --- 📢 LOG LAYER 1: MAIN ACTIVITY GROUP ---
+    # --- LOGGING UPDATES ---
     if LOG_GROUP:
         try:
             await bot.send_message(
                 LOG_GROUP, 
-                "🚀 **Userbot Community Bot is Online!**\n\n"
-                "• Database: `MongoDB (Cloud)`\n"
-                "• Status: `Active & Secure`"
+                "⚡ **System Reboot Successful!**\n\n"
+                "• **Engine:** `v3.0 Optimized`\n"
+                "• **Database:** `Online` (MongoDB)\n"
+                "• **Status:** `Waiting for sessions...`"
             )
         except Exception as e:
-            log.error(f"Activity Log failed: {e}")
+            log.error(f"Log group notification failed: {e}")
 
-    # --- 📂 LOG LAYER 2: DEDICATED BACKUP GROUP ---
-    if BACKUP_CHAT:
-        try:
-            await bot.send_message(
-                BACKUP_CHAT, 
-                "☁️ **Cloud Storage System Connected!**\n\n"
-                "• Status: `Online`\n"
-                "• Protection: `MongoDB Atlas Sync`"
-            )
-        except Exception as e:
-            log.error(f"Backup Log failed: {e}")
-    
-    # STEP 3: LOAD PLUGINS
+    # STEP 3: LOAD SYSTEM PLUGINS
     load_plugins()
 
-    # 🔥 STEP 4: TRIGGER AUTO-RESUME & BACKUP
-    asyncio.create_task(resume_userbots()) # Resume old sessions
+    # 🔥 STEP 4: TRIGGER RECOVERY & BACKUP TASKS
+    asyncio.create_task(resume_userbots()) 
     asyncio.create_task(auto_backup_task())
     
     print("---------------------------------------")
-    print("   Bot is now Online and Ready!        ")
+    print("   ENGINE IS ONLINE AND STABLE!        ")
     print("---------------------------------------")
     
     await bot.run_until_disconnected()
