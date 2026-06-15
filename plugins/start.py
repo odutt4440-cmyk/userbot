@@ -1,4 +1,5 @@
 import os
+import asyncio
 from bot_instance import bot 
 from telethon import events, Button
 from config import START_PIC, ADMIN_ID, LOG_GROUP
