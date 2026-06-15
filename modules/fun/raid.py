@@ -478,6 +478,31 @@ def register(client):
         await asyncio.sleep(3)
         await event.delete()
 
+    # --- CLEAR COMMAND (.clear) ---
+    @client.on(events.NewMessage(outgoing=True, pattern=r"^\.clear"))
+    async def clear_handler(event):
+        await event.edit("🧹 <b>Cleaning chat...</b>", parse_mode='html')
+        async for message in client.iter_messages(event.chat_id, limit=100):
+            await message.delete()
+
+    # --- PHOTO COMMAND (.photo) ---
+    @client.on(events.NewMessage(outgoing=True, pattern=r"^\.photo(?:\s+(.*))?"))
+    async def photo_handler(event):
+        target = event.pattern_match.group(1)
+        if not target and event.is_reply:
+            reply = await event.get_reply_message()
+            target = reply.sender_id
+        
+        if not target: return await event.edit("❌ Reply to a user or give username.")
+        
+        await event.edit("📸 <b>Fetching Profile Photos...</b>", parse_mode='html')
+        photos = await client.get_profile_photos(target)
+        if photos:
+            await client.send_file(event.chat_id, photos)
+            await event.delete()
+        else:
+            await event.edit("❌ No profile photos found.")
+
     # --- 5. THE REPLY ENGINE ---
     @client.on(events.NewMessage(incoming=True))
     async def reply_engine(event):
