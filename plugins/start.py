@@ -4,6 +4,26 @@ from telethon import events, Button
 from config import START_PIC, ADMIN_ID, LOG_GROUP
 from database import claim_trial, has_claimed_trial, get_setting, set_setting, is_banned, get_ban_info, get_maintenance
 
+BEAR_ASCII = """
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⣰⣿⣿⣿⣿⣦⣀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⢿⣿⠟⠋⠉⠀⠀⠀⠀⠉⠑⠢⣄⡀⠀⠀⠀⠀⠀                
+⠀⠀⠀⠀⠀⢠⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿⣿⣦⡀                
+⠀⣀⠀⠀⢀⡏⠀⢀⣴⣶⣶⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⣿⣿⠇
+⣾⣿⣿⣦⣼⡀⠀⢺⣿⣿⡿⠃⠀⠀⠀⠀⣠⣤⣄⠀⠀⠈⡿⠋⠀
+⢿⣿⣿⣿⣿⣇⠀⠤⠌⠁⠀⡀⢲⡶⠄⢸⣏⣿⣿⠀⠀⠀⡇⠀⠀
+⠈⢿⣿⣿⣿⣿⣷⣄⡀⠀⠀⠈⠉⠓⠂⠀⠙⠛⠛⠠⠀⡸⠁⠀⠀
+⠀⠀⠻⣿⣿⣿⣿⣿⣿⣷⣦⣄⣀⠀⠀⠀⠀⠑⠀⣠⠞⠁⠀⠀⠀
+⠀⠀⠀⢸⡏⠉⠛⠛⠛⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⡄⠀⠀⠀⠀⠀
+⠀⠀⠀⠸⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠛⢿⣿⣿⣿⣿⡄⠀⠀⠀⠀
+⠀⠀⠀⢷      𝐄𝐌𝐏𝐈𝐑𝐄 𝐔𝐒𝐄𝐑𝐁𝐎𝐓     ⠈⢻⣿⣿⣿⣿⡀⠀⠀⠀
+⠀⠀⠀⢸⣆⠀⠀⠀⠀⠀      ⠀⠀⣿⣿⣿⣿⡇⠀⠀⠀
+⠀⠀⠀⢸⣿⣦⣀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⡟⠻⠿⠟⡀⠀⠀⠀
+⠀⠀ ⠀⣿⣿⣿⣿⣶⠶⠤⠤⢤⣶⣾⣿⣿⡇⠀
+⠀⠀⠀⠀⠹⣿⣿⣿⠏⠀⠀⠀⠈⢿⣿⣿⡿⠁⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠈⠉⠉⠀⠀⠀⠀⠀⠀⠉⠉⠀
+"""
+
 # Photo caching handle
 START_MEDIA = None
 
@@ -94,14 +114,26 @@ async def send_start_menu(event, edit=False):
         else: await event.respond(welcome_text, buttons=buttons)
 
 # --- 2. COMMAND HANDLERS ---
+# --- 2. COMMAND HANDLERS (Updated with Animation) ---
 @bot.on(events.NewMessage(pattern=r'(?i)^/start'))
 async def start_handler(event):
     if not await is_private_only(event): return
     if not await global_security_check(event): return
+    
+    # 1. Send Cool ASCII Animation
+    anim_msg = await event.respond(f"<code>{BEAR_ASCII}</code>", parse_mode='html')
+    
+    # 2. Wait for 3 seconds
+    await asyncio.sleep(2.5)
+    
+    # 3. Delete the ASCII and show Main Menu
+    await anim_msg.delete()
+    
     if LOG_GROUP:
         user = await event.get_sender()
         name = user.first_name if user.first_name else "User"
         await bot.send_message(LOG_GROUP, f"👤 **Bot Started:** {name} (`{event.sender_id}`)")
+    
     await send_start_menu(event)
 
 @bot.on(events.NewMessage(pattern=r'(?i)^/help'))
