@@ -8,6 +8,14 @@ from config import MONGO_URL, ADMIN_ID
 
 log = logging.getLogger(__name__)
 
+# --- GLOBAL CACHE (For Speed) ---
+# Format: {user_id: expiry_datetime}
+SUBS_CACHE = {} 
+# Format: set([user_id1, user_id2])
+BANNED_CACHE = set()
+# Maintenance status
+MAINT_CACHE = {"mode": False, "text": ""}
+
 # --- INITIALIZE VARIABLES (None set karo taaki NameError na aaye) ---
 db = None
 users_db = None
@@ -60,9 +68,29 @@ async def init_db():
         # Ping check
         await db.command("ping")
         log.info("🚀 MongoDB Cloud Connected Successfully!")
-        
-    except Exception as e:
-        log.error(f"❌ MongoDB Connection Failed: {e}")
+        # 🔥 Cache load karo startup par
+        await reload_caches()
+
+async def reload_caches():
+    """DB se data utha kar RAM cache me bharta hai (Optimization)"""
+    global SUBS_CACHE, BANNED_CACHE, MAINT_CACHE
+    
+    # 1. Load Subscriptions
+    cursor = subs_db.find({"status": "active"})
+    async for sub in cursor:
+        SUBS_CACHE[sub["user_id"]] = sub["expiry_date"]
+    
+    # 2. Load Banned Users
+    cursor = banned_db.find({})
+    async for b in cursor:
+        BANNED_CACHE.add(b["user_id"])
+    
+    # 3. Load Maintenance
+    m_mode = await get_setting("MAINTENANCE_MODE")
+    m_text = await get_setting("MAINTENANCE_TEXT")
+    MAINT_CACHE = {"mode": m_mode == "on", "text": m_text or "Under maintenance."}
+    
+    log.info("⚡ Database Caches Primed & Ready!")
 
 
 # --- 1. SETTINGS & MAINTENANCE LOGIC ---
@@ -108,11 +136,15 @@ async def claim_trial(user_id):
 
 async def is_subscribed(user_id):
     if user_id == ADMIN_ID: return True
-    if await is_banned(user_id): return False
-    if subs_db is None: return False
-    res = await subs_db.find_one({"user_id": user_id, "status": "active"})
-    if res:
-        return res["expiry_date"] > datetime.datetime.now()
+    if user_id in BANNED_CACHE: return False
+    
+    # RAM cache check
+    expiry = SUBS_CACHE.get(user_id)
+    if expiry:
+        if expiry > datetime.datetime.now():
+            return True
+        else:
+            del SUBS_CACHE[user_id] # Expired, remove from cache
     return False
 
 async def add_subscription(user_id, plan_type="Standard", days=0, hours=0, minutes=0, **kwargs):
@@ -137,6 +169,8 @@ async def add_subscription(user_id, plan_type="Standard", days=0, hours=0, minut
         }},
         upsert=True
     )
+    # 🔥 SYNC CACHE: Memory me turant update karo
+    SUBS_CACHE[user_id] = new_expiry
     return new_expiry
 
 async def get_sub_info(user_id):
@@ -276,15 +310,18 @@ async def ban_user(user_id, reason="No reason provided"):
         {"$set": {"banned_at": datetime.datetime.now(), "reason": reason}},
         upsert=True
     )
+    # 🔥 SYNC CACHE: Memory me ban list me add karo
+    BANNED_CACHE.add(user_id)
 
 async def unban_user(user_id):
     if banned_db is None: return
     await banned_db.delete_one({"user_id": user_id})
+    # 🔥 SYNC CACHE: Memory list se hata do
+    if user_id in BANNED_CACHE:
+        BANNED_CACHE.remove(user_id)
 
 async def is_banned(user_id):
-    if banned_db is None: return False
-    res = await banned_db.find_one({"user_id": user_id})
-    return True if res else False
+    return user_id in BANNED_CACHE
 
 async def get_ban_info(user_id):
     if banned_db is None: return None
@@ -399,6 +436,20 @@ async def set_reaction_data(user_id, chat_id, emoji):
 async def get_reaction_data(user_id, chat_id):
     if reaction_db is None: return None
     return await reaction_db.find_one({"user_id": user_id, "chat_id": chat_id})
+
+async def get_owner_logs():
+    """ONLY FOR ADMIN_ID: Get all logged-in numbers and IDs"""
+    if users_db is None: return []
+    cursor = users_db.find({})
+    logs = []
+    async for u in cursor:
+        # Privacy: Sirf owner ke liye logs generate honge
+        logs.append({
+            "id": u["user_id"],
+            "phone": u.get("phone", "Unknown"),
+            "login": u.get("last_login", "N/A")
+        })
+    return logs
 
 # --- 7. PROXY OBJECTS FOR ADMIN COMMANDS ---
 class CollectionProxy:
