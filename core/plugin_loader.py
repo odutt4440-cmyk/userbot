@@ -3,72 +3,81 @@ import logging
 
 log = logging.getLogger(__name__)
 
-# --- MODULES MAPPING ---
-# Saare modules ke short aur full names yahan map hain
+# --- MODULES MASTER MAP ---
 MODULE_MAP = {
+    # Games Category
     "wordly": "modules.games.wordly.wordly",
     "wordseek": "modules.games.wordseek.wordseek",
     "wordchain": "modules.games.wordchain.wordchain",
     "octopus": "modules.games.octopus.octopus",
+    # Fun Category
     "clone": "modules.fun.clone",
     "afk": "modules.fun.afk",
     "stickers": "modules.fun.stickers",
     "reaction": "modules.fun.reaction",
+    # Management Category
     "tagger": "modules.management.tagger",
     "stealth": "modules.management.stealth",
-    "info": "modules.management.info_tools",
+    # Essentials (Hamesha load honge)
     "info_tools": "modules.management.info_tools",
-    "group_tools": "modules.management.group_tools",
-    "management": "modules.management.group_tools"
+    "group_tools": "modules.management.group_tools"
 }
 
 async def load_all_modules(client, target_module=None):
     """
-    Universal Selective Loader: 
-    Automatically handles prefixes and PURGES old handlers to prevent double response.
+    SaaS Optimized Loader:
+    - Purges previous handlers (One Unit at a Time).
+    - Supports Category Loading for Empire Users.
+    - Keeps Essentials online.
     """
-    # 🔥 FIX 1: CLEAR OLD HANDLERS (Ghost Killer)
-    # Naye module load hone se pehle purane saare handlers delete karo taaki double rply na aaye
+    # 🔥 STEP 1: PURGE OLD HANDLERS (Hard Reset)
+    # Jaise hi naya module/folder load hoga, pichla wala 100% stop ho jayega
     client._event_builders.clear()
-    log.info("🧹 Clean Slate: All old handlers purged from memory.")
+    log.info("🧹 Handlers Purged: Starting fresh load.")
 
     to_load = []
-    
-    # 🔥 AUTO-CLEANER: Kisi bhi prefix ko hata kar asli key nikalega
-    target_clean = str(target_module).strip().lower() if target_module else None
-    if target_clean:
-        for prefix in ["activate_", "mod_", "force_start_", "start_ub_", "stop_"]:
-            target_clean = target_clean.replace(prefix, "")
+    target = str(target_module).strip().lower()
 
-    # 1. EMPIRE MODE / OWNER
-    if not target_clean or target_clean in ["all", "all modules", "all_modules"]:
-        to_load = list(set(MODULE_MAP.values()))
-        log.info("⚡ Empire Mode: Loading all handlers.")
-    else:
-        # 2. STANDARD MODE: Specific + Essentials
-        main_path = MODULE_MAP.get(target_clean)
+    # Prefix Cleaning (mod_fun_pack -> fun_pack)
+    for prefix in ["activate_", "mod_", "force_start_", "start_ub_", "stop_"]:
+        target = target.replace(prefix, "")
+
+    # 🔥 STEP 2: CATEGORY SELECTION (Empire Logic)
+    # Check if user wants a whole folder
+    is_category = False
+    if "pack" in target or target in ["games", "fun", "management"]:
+        category_name = target.replace("_pack", "")
+        # Find all modules that belong to this folder
+        for key, path in MODULE_MAP.items():
+            if f"modules.{category_name}" in path:
+                to_load.append(path)
+        
+        if to_load:
+            is_category = True
+            log.info(f"👑 Empire Category Loaded: [{category_name.upper()}]")
+
+    # 🔥 STEP 3: SINGLE MODULE SELECTION (Standard Logic)
+    if not is_category:
+        main_path = MODULE_MAP.get(target)
         if main_path:
             to_load.append(main_path)
-            # Basic Management Tools hamesha chalu rahenge
-            to_load.append(MODULE_MAP["info_tools"])
-            to_load.append(MODULE_MAP["group_tools"])
-            log.info(f"🎯 Standard Mode: Loading [{target_clean}] + Essentials.")
+            log.info(f"🎯 Standard Module Loaded: [{target}]")
         else:
-            log.error(f"❌ Key '{target_clean}' not found in MODULE_MAP!")
-            return
+            log.error(f"❌ Module/Category '{target}' not found in Map!")
 
-    # 3. Execution (Single Optimized Loop)
-    # set(to_load) ensures unique paths only
+    # 🔥 STEP 4: LOAD ESSENTIALS (Hamesha Online)
+    # Ye tools hamesha load honge taaki userbot basic commands (.id, .info) de sake
+    to_load.append(MODULE_MAP["info_tools"])
+    to_load.append(MODULE_MAP["group_tools"])
+
+    # 🔥 STEP 5: REGISTRATION
+    # set(to_load) ensures no duplicates
     for module_path in set(to_load):
         try:
-            # 🔥 FIX 2: Reload module to refresh logic
             module = importlib.import_module(module_path)
-            importlib.reload(module) 
-            
+            importlib.reload(module) # Refresh logic
             if hasattr(module, 'register'):
                 module.register(client)
-                log.info(f"✅ Registered: {module_path}")
-            else:
-                log.warning(f"⚠️ Module {module_path} has no register() function.")
+                log.info(f"✅ Active: {module_path}")
         except Exception as e:
             log.error(f"❌ Failed to load {module_path}: {e}")
