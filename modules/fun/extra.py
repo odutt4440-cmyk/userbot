@@ -108,6 +108,26 @@ def register(client):
             await asyncio.sleep(0.8)
         if cmd == "heart": await event.edit("You Are So Cute 🙈")
 
+    # --- GREET COMMAND (.greet) ---
+    @client.on(events.NewMessage(outgoing=True, pattern=r"^\.greet"))
+    async def greet_handler(event):
+        wishes = [
+            "Aaj ka din badhiya ho, doston! 💪",
+            "Let's make today awesome together! 🌟",
+            "Keep the good vibes going! 🌸",
+            "Aaj kuch zabardast karte hain! 🎉"
+        ]
+        await event.edit(random.choice(wishes))
+
+    # --- ALIVE COMMAND (.alive) ---
+    @client.on(events.NewMessage(outgoing=True, pattern=r"^\.alive"))
+    async def alive_handler(event):
+        # Image URL ya system path de sakte ho
+        # caption me user details
+        me = await client.get_me()
+        await event.delete()
+        await client.send_message(event.chat_id, f"<b>EMPIRE IS ALIVE 👑</b>\n\n👤 <b>Owner:</b> {me.first_name}\n⚙️ <b>Status:</b> Running Smoothly", parse_mode='html')
+
     # --- 3. HACKING ANIMATION ---
     @client.on(events.NewMessage(outgoing=True, pattern=r"^\.hack"))
     async def hack_handler(event):
