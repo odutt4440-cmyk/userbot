@@ -2,7 +2,7 @@ import os
 import asyncio
 from bot_instance import bot 
 from telethon import events, Button
-from config import START_PIC, ADMIN_ID, LOG_GROUP
+from config import START_PIC, ADMIN_ID, LOG_GROUP, CHANNEL_LINK
 from database import claim_trial, has_claimed_trial, get_setting, set_setting, get_user_plan_type, is_banned, get_ban_info, get_maintenance
 
 BEAR_ASCII = """
@@ -35,7 +35,7 @@ async def is_private_only(event):
             "❌ **Access Denied!**\n\n"
             "This bot is configured to work only in **Private DM** for security.\n\n"
             "👉 Please click the button below to use me in private.",
-            buttons=[[Button.url("📩 Open Private Chat", "t.me/YourBotUsername")]] # Update username
+            buttons=[[Button.url("📩 Open Private Chat", "t.me/Functional_User_bot")]] # Update username
         )
         return False
     return True
@@ -74,7 +74,7 @@ async def send_start_menu(event, edit=False):
         [Button.inline("𝐄xᴘʟᴏʀᴇ 𝐌ᴏᴅᴜʟᴇs ", data="modules_main")],
         [Button.inline("𝐂ʟᴧɪᴍ 𝟷-𝐃ᴧʏ 𝐓ʀɪᴧʟ ", data="claim_trial_btn")],
         [Button.inline("𝐒ᴜᴘᴘᴏʀᴛ", data="support_main")], # <--- Naya Button
-        [Button.inline("𝐑ᴜʟᴇs  ", data="rules"), Button.inline(" 𝐃ᴇᴠᴇʟᴏᴘᴇʀ", data="dev_info")],
+        [Button.inline("𝐑ᴜʟᴇs  ", data="rules"), Button.url(" 𝐂ʜᴧɴɴᴇʟ", CHANNEL_LINK)],
         [Button.inline("𝐆ᴇɴᴇʀᴧᴛᴇ 𝐒ᴇssɪᴏɴ", data="gen_string_internal")] 
     ]
 
