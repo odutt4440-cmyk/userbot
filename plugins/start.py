@@ -65,16 +65,14 @@ async def check_user_joined(user_id):
     if not MUST_JOIN or user_id == ADMIN_ID: 
         return True 
     try:
-        # Pehle channel entity nikaalna zaroori hai
-        channel_entity = await bot.get_entity(MUST_JOIN)
-        await bot(GetParticipantRequest(channel=channel_entity, user_id=user_id))
+        # 🔥 ZAROORI: MUST_JOIN me sirf 'darkconsolecommunity' hona chahiye (No @, No Link)
+        await bot(GetParticipantRequest(channel=MUST_JOIN, user_id=user_id))
         return True
     except UserNotParticipantError:
         return False
     except Exception as e:
-        # Agar bot admin nahi hai toh console me error dikhayega
+        # Agar bot admin nahi hai toh yahan error print hoga
         print(f"CRITICAL JOIN CHECK ERROR: {e}")
-        # Default to False taaki security breach na ho
         return False
 
 # --- 1. MAIN MENU LOGIC ---
@@ -140,7 +138,7 @@ async def start_handler(event):
     
     user_id = event.sender_id
     
-    # 🔥 STICK JOIN CHECK
+    # 🔥 FORCE JOIN CHECK
     is_joined = await check_user_joined(user_id)
     
     if not is_joined:
@@ -153,7 +151,7 @@ async def start_handler(event):
             [Button.url("📢 Join Community", CHANNEL_LINK)],
             [Button.inline("✅ Verify & Continue", data="verify_join")]
         ]
-        # Photo ke saath Join message
+        # Photo ke saath Join message dikhao
         return await bot.send_file(event.chat_id, START_PIC, caption=join_text, buttons=buttons)
 
     # ✅ AGAR JOINED HAI -> Tab Bear Animation aayegi
