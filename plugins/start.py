@@ -62,15 +62,20 @@ async def global_security_check(event):
     return True
 
 async def check_user_joined(user_id):
-    if not MUST_JOIN: return True 
+    if not MUST_JOIN or user_id == ADMIN_ID: 
+        return True 
     try:
-        await bot(GetParticipantRequest(channel=MUST_JOIN, user_id=user_id))
+        # Pehle channel entity nikaalna zaroori hai
+        channel_entity = await bot.get_entity(MUST_JOIN)
+        await bot(GetParticipantRequest(channel=channel_entity, user_id=user_id))
         return True
     except UserNotParticipantError:
         return False
     except Exception as e:
-        print(f"Join Check Error: {e}")
-        return True # Fallback safety
+        # Agar bot admin nahi hai toh console me error dikhayega
+        print(f"CRITICAL JOIN CHECK ERROR: {e}")
+        # Default to False taaki security breach na ho
+        return False
 
 # --- 1. MAIN MENU LOGIC ---
 async def send_start_menu(event, edit=False):
@@ -127,7 +132,7 @@ async def send_start_menu(event, edit=False):
         if edit: await event.edit(welcome_text, buttons=buttons)
         else: await event.respond(welcome_text, buttons=buttons)
 
-# --- 2. COMMAND HANDLERS (Updated with Force Join & Animation) ---
+# --- 2. COMMAND HANDLERS (Updated with Strict Force Join) ---
 @bot.on(events.NewMessage(pattern=r'(?i)^/start'))
 async def start_handler(event):
     if not await is_private_only(event): return
@@ -135,21 +140,23 @@ async def start_handler(event):
     
     user_id = event.sender_id
     
-    # 🔥 1. FORCE JOIN CHECK (Saboze Pehle)
+    # 🔥 STICK JOIN CHECK
     is_joined = await check_user_joined(user_id)
-    if not is_joined and user_id != ADMIN_ID:
+    
+    if not is_joined:
         join_text = (
             "🚀 **Welcome to Empire Userbot!**\n\n"
-            "To access our premium modules and high-speed services, you must be a member of our community channel.\n\n"
-            "📢 **Please join below and click 'Verify' to unlock your dashboard.**"
+            "To keep our community secure and updated, you must join our official channel before using the bot.\n\n"
+            "📢 **Join the channel below and click 'Verify' to unlock your dashboard.**"
         )
         buttons = [
             [Button.url("📢 Join Community", CHANNEL_LINK)],
             [Button.inline("✅ Verify & Continue", data="verify_join")]
         ]
+        # Photo ke saath Join message
         return await bot.send_file(event.chat_id, START_PIC, caption=join_text, buttons=buttons)
 
-    # ✅ 2. AGAR JOINED HAI -> Tab Bear Animation aayegi
+    # ✅ AGAR JOINED HAI -> Tab Bear Animation aayegi
     anim_msg = await event.respond(f"<code>{BEAR_ASCII}</code>", parse_mode='html')
     await asyncio.sleep(2.5)
     await anim_msg.delete()
@@ -357,13 +364,14 @@ async def callback_handler(event):
         await send_start_menu(event, edit=True)
 
     # 🔥 3. VERIFY JOIN CALLBACK
+    
     elif data == "verify_join":
         user_id = event.sender_id
         if await check_user_joined(user_id):
-            await event.answer("✅ Verified! Access Granted.", alert=False)
-            await event.delete() # Join message delete karo
+            await event.answer("✅ Verification Successful!", alert=False)
+            await event.delete() # Join message uda do
             
-            # Verify hone ke baad animation dikhao
+            # Professional Flow: Animation then Menu
             anim = await event.respond(f"<code>{BEAR_ASCII}</code>", parse_mode='html')
             await asyncio.sleep(2.5)
             await anim.delete()
