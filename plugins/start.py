@@ -62,26 +62,31 @@ async def global_security_check(event):
         
     return True
 
-async def check_user_joined(user_id):
+async def check_user_joined(user_id, force=False):
     if user_id == ADMIN_ID or not MUST_JOIN: 
         return True 
     
-    # 1. Check Local Cache (Instantly allow if verified recently)
     now = asyncio.get_event_loop().time()
-    if user_id in JOIN_CACHE and now < JOIN_CACHE[user_id]:
-        return True
+    
+    # 1. Cache check tabhi hoga jab force=False ho
+    if not force:
+        if user_id in JOIN_CACHE and now < JOIN_CACHE[user_id]:
+            return True
 
     try:
-        # 2. Check Participation using ID
+        # 2. Fresh API Check
         await bot(GetParticipantRequest(channel=MUST_JOIN, user_id=user_id))
         
-        # 3. Success: Cache it for 15 minutes (900 seconds)
-        JOIN_CACHE[user_id] = now + 900 
+        # Success: Update Cache (5 min ke liye kaafi hai)
+        JOIN_CACHE[user_id] = now + 300 
         return True
+        
     except UserNotParticipantError:
+        # 🔥 Agar member nahi hai, toh cache se bhi uda do instantly
+        if user_id in JOIN_CACHE:
+            del JOIN_CACHE[user_id]
         return False
     except Exception as e:
-        # Technical error par bypass kar do taaki user na fase
         print(f"🛡️ Join Check Fallback: {e}")
         return True
 
