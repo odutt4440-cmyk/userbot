@@ -18,7 +18,7 @@ MONGO_URL = os.getenv("MONGO_URL", "")
 # Tera Telegram User ID (Numeric) - Main Owner
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-MUST_JOIN = "darkconsolecommunity"
+MUST_JOIN = -1003946512455
 CHANNEL_LINK = "https://t.me/darkconsolecommunity" 
 # Log Group ID jahan screenshots aayenge aur Sudo users approve karenge
 # Ensure it starts with -100 (e.g., -100123456789)
