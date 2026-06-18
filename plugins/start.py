@@ -2,7 +2,9 @@ import os
 import asyncio
 from bot_instance import bot 
 from telethon import events, Button
-from config import START_PIC, ADMIN_ID, LOG_GROUP, CHANNEL_LINK
+from telethon.tl.functions.channels import GetParticipantRequest
+from telethon.errors import UserNotParticipantError
+from config import START_PIC, ADMIN_ID, LOG_GROUP, CHANNEL_LINK, MUST_JOIN
 from database import claim_trial, has_claimed_trial, get_setting, set_setting, get_user_plan_type, is_banned, get_ban_info, get_maintenance
 
 BEAR_ASCII = """
@@ -59,6 +61,17 @@ async def global_security_check(event):
         
     return True
 
+async def check_user_joined(user_id):
+    if not MUST_JOIN: return True 
+    try:
+        await bot(GetParticipantRequest(channel=MUST_JOIN, user_id=user_id))
+        return True
+    except UserNotParticipantError:
+        return False
+    except Exception as e:
+        print(f"Join Check Error: {e}")
+        return True # Fallback safety
+
 # --- 1. MAIN MENU LOGIC ---
 async def send_start_menu(event, edit=False):
     global START_MEDIA
@@ -114,20 +127,31 @@ async def send_start_menu(event, edit=False):
         if edit: await event.edit(welcome_text, buttons=buttons)
         else: await event.respond(welcome_text, buttons=buttons)
 
-# --- 2. COMMAND HANDLERS ---
-# --- 2. COMMAND HANDLERS (Updated with Animation) ---
+# --- 2. COMMAND HANDLERS (Updated with Force Join & Animation) ---
 @bot.on(events.NewMessage(pattern=r'(?i)^/start'))
 async def start_handler(event):
     if not await is_private_only(event): return
     if not await global_security_check(event): return
     
-    # 1. Send Cool ASCII Animation
+    user_id = event.sender_id
+    
+    # 🔥 1. FORCE JOIN CHECK (Saboze Pehle)
+    is_joined = await check_user_joined(user_id)
+    if not is_joined and user_id != ADMIN_ID:
+        join_text = (
+            "🚀 **Welcome to Empire Userbot!**\n\n"
+            "To access our premium modules and high-speed services, you must be a member of our community channel.\n\n"
+            "📢 **Please join below and click 'Verify' to unlock your dashboard.**"
+        )
+        buttons = [
+            [Button.url("📢 Join Community", CHANNEL_LINK)],
+            [Button.inline("✅ Verify & Continue", data="verify_join")]
+        ]
+        return await bot.send_file(event.chat_id, START_PIC, caption=join_text, buttons=buttons)
+
+    # ✅ 2. AGAR JOINED HAI -> Tab Bear Animation aayegi
     anim_msg = await event.respond(f"<code>{BEAR_ASCII}</code>", parse_mode='html')
-    
-    # 2. Wait for 3 seconds
     await asyncio.sleep(2.5)
-    
-    # 3. Delete the ASCII and show Main Menu
     await anim_msg.delete()
     
     if LOG_GROUP:
@@ -331,12 +355,24 @@ async def callback_handler(event):
     
     if data == "start_back":
         await send_start_menu(event, edit=True)
-    
-    # modules_main yahan se hata diya gaya hai kyunki uska apna @bot.on upar hai
+
+    # 🔥 3. VERIFY JOIN CALLBACK
+    elif data == "verify_join":
+        user_id = event.sender_id
+        if await check_user_joined(user_id):
+            await event.answer("✅ Verified! Access Granted.", alert=False)
+            await event.delete() # Join message delete karo
+            
+            # Verify hone ke baad animation dikhao
+            anim = await event.respond(f"<code>{BEAR_ASCII}</code>", parse_mode='html')
+            await asyncio.sleep(2.5)
+            await anim.delete()
+            
+            await send_start_menu(event)
+        else:
+            await event.answer("⚠️ Access Denied! Please join the channel first.", alert=True)
     
     elif data == "rules":
         await event.answer("1. One trial per user.\n2. No spamming commands.\n3. Respect community", alert=True)
     elif data == "dev_info":
         await event.answer("Developed by: @YourUsername\nSystem: SQLite Fast Engine v2.5", alert=True)
-        
-    
