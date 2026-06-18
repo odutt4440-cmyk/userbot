@@ -63,32 +63,35 @@ async def global_security_check(event):
     return True
 
 async def check_user_joined(user_id, force=False):
-    if user_id == ADMIN_ID or not MUST_JOIN: 
+    # Sirf Owner bypass kar sakta hai
+    if user_id == ADMIN_ID: 
+        return True 
+    if not MUST_JOIN: 
         return True 
     
     now = asyncio.get_event_loop().time()
     
-    # 1. Cache check tabhi hoga jab force=False ho
+    # 1. Cache Check (Bypass if not forced)
     if not force:
         if user_id in JOIN_CACHE and now < JOIN_CACHE[user_id]:
             return True
 
     try:
-        # 2. Fresh API Check
+        # 2. Strict API Check
         await bot(GetParticipantRequest(channel=MUST_JOIN, user_id=user_id))
         
-        # Success: Update Cache (5 min ke liye kaafi hai)
+        # Success: Cache it
         JOIN_CACHE[user_id] = now + 300 
         return True
         
     except UserNotParticipantError:
-        # 🔥 Agar member nahi hai, toh cache se bhi uda do instantly
-        if user_id in JOIN_CACHE:
-            del JOIN_CACHE[user_id]
+        if user_id in JOIN_CACHE: del JOIN_CACHE[user_id]
         return False
     except Exception as e:
-        print(f"🛡️ Join Check Fallback: {e}")
-        return True
+        # 🔥 DEBUG: Agar yahan error aa raha hai toh Railway Logs me dikhega
+        print(f"❌ CRITICAL JOIN ERROR: {e}")
+        # Error par bypass mat karo, False return karo taaki join msg dikhe
+        return False
 
 # --- 1. MAIN MENU LOGIC ---
 async def send_start_menu(event, edit=False):
