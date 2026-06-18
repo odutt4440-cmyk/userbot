@@ -65,14 +65,18 @@ async def check_user_joined(user_id):
     if not MUST_JOIN or user_id == ADMIN_ID: 
         return True 
     try:
-        # 🔥 ZAROORI: MUST_JOIN me sirf 'darkconsolecommunity' hona chahiye (No @, No Link)
-        await bot(GetParticipantRequest(channel=MUST_JOIN, user_id=user_id))
+        # 🔥 STEP 1: Pehle channel ko resolve karo (Zaroori)
+        channel_entity = await bot.get_entity(MUST_JOIN)
+        
+        # 🔥 STEP 2: Ab check karo participation
+        await bot(GetParticipantRequest(channel=channel_entity, user_id=user_id))
         return True
     except UserNotParticipantError:
         return False
     except Exception as e:
-        # Agar bot admin nahi hai toh yahan error print hoga
-        print(f"CRITICAL JOIN CHECK ERROR: {e}")
+        # Railway Console me check karo agar ye print ho raha hai
+        print(f"⚠️ VERIFICATION DEBUG: {e}")
+        # Agar bot admin nahi hai toh 'ChatAdminRequiredError' aayega
         return False
 
 # --- 1. MAIN MENU LOGIC ---
@@ -363,20 +367,26 @@ async def callback_handler(event):
 
     # 🔥 3. VERIFY JOIN CALLBACK
     
+    # plugins/start.py ke callback_handler ke andar:
     elif data == "verify_join":
         user_id = event.sender_id
+        
+        # Thoda sa intezar taaki Telegram API update ho jaye
+        await event.answer("🔄 Verifying membership...", alert=False)
+        await asyncio.sleep(1) 
+        
         if await check_user_joined(user_id):
-            await event.answer("✅ Verification Successful!", alert=False)
+            await event.answer("✅ Verified! Welcome to Empire.", alert=False)
             await event.delete() # Join message uda do
             
-            # Professional Flow: Animation then Menu
+            # Professional Animation then Menu
             anim = await event.respond(f"<code>{BEAR_ASCII}</code>", parse_mode='html')
             await asyncio.sleep(2.5)
             await anim.delete()
             
             await send_start_menu(event)
         else:
-            await event.answer("⚠️ Access Denied! Please join the channel first.", alert=True)
+            await event.answer("❌ Still not found in channel! Please join first and wait 3 seconds.", alert=True)
     
     elif data == "rules":
         await event.answer("1. One trial per user.\n2. No spamming commands.\n3. Respect community", alert=True)
