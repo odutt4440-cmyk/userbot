@@ -29,6 +29,7 @@ BEAR_ASCII = """
 
 # Photo caching handle
 START_MEDIA = None
+JOIN_CACHE = {}
 
 # --- HELPER: PRIVATE ONLY CHECK ---
 async def is_private_only(event):
@@ -62,19 +63,27 @@ async def global_security_check(event):
     return True
 
 async def check_user_joined(user_id):
-    if not MUST_JOIN or user_id == ADMIN_ID: 
+    if user_id == ADMIN_ID or not MUST_JOIN: 
         return True 
+    
+    # 1. Check Local Cache (Instantly allow if verified recently)
+    now = asyncio.get_event_loop().time()
+    if user_id in JOIN_CACHE and now < JOIN_CACHE[user_id]:
+        return True
+
     try:
-        # 🔥 High-Speed Verification Logic
-        # Direct string username use karne se Telethon fast resolve karta hai
+        # 2. Check Participation using ID
         await bot(GetParticipantRequest(channel=MUST_JOIN, user_id=user_id))
+        
+        # 3. Success: Cache it for 15 minutes (900 seconds)
+        JOIN_CACHE[user_id] = now + 900 
         return True
     except UserNotParticipantError:
         return False
     except Exception as e:
-        # Logs me check karo agar bot admin nahi hai toh error dikhayega
-        print(f"🛡️ Membership Check Failed: {e}")
-        return False
+        # Technical error par bypass kar do taaki user na fase
+        print(f"🛡️ Join Check Fallback: {e}")
+        return True
 
 # --- 1. MAIN MENU LOGIC ---
 async def send_start_menu(event, edit=False):
@@ -365,37 +374,23 @@ async def callback_handler(event):
     # 🔥 3. VERIFY JOIN CALLBACK
     elif data == "verify_join":
         user_id = event.sender_id
+        await event.answer("🛡️ Checking community status...", alert=False)
         
-        # 1. Start the verification toast
-        await event.answer("🛡️ Verifying your community status... Please wait.", alert=False)
-        
-        # 2. Add a tiny delay for Telegram API sync
-        await asyncio.sleep(0.5) 
-        
-        # 3. Check membership
         if await check_user_joined(user_id):
-            # Success Flow
-            await event.delete() # Remove the join restriction message
+            await event.answer("✅ Access Granted!", alert=False)
+            await event.delete() # Join message delete karo
             
-            # Professional "System Unlocking" Animation
-            anim = await event.respond("<code>🔄 Initializing Empire Secure Core...</code>", parse_mode='html')
-            await asyncio.sleep(1)
+            # 🔥 Verification ke baad Cool Animation
+            anim = await event.respond("<code>🔓 Unlocking Empire Systems...</code>", parse_mode='html')
+            await asyncio.sleep(1.5)
             await anim.edit(f"<code>{BEAR_ASCII}</code>", parse_mode='html')
             
             await asyncio.sleep(2.5)
             await anim.delete()
             
-            # Final Welcome
             await send_start_menu(event)
         else:
-            # Failure Flow (Professional English Quote)
-            error_msg = (
-                "⚠️ ACCESS DENIED\n\n"
-                "We couldn't verify your membership in our official channel. "
-                "Membership is mandatory to maintain server stability.\n\n"
-                "👉 Please join @darkconsolecommunity and try again."
-            )
-            await event.answer(error_msg, alert=True)
+            await event.answer("⚠️ Not joined yet! Please join @darkconsolecommunity first.", alert=True)
     
     elif data == "rules":
         await event.answer("1. One trial per user.\n2. No spamming commands.\n3. Respect community", alert=True)
