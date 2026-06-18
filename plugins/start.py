@@ -29,7 +29,7 @@ BEAR_ASCII = """
 
 # Photo caching handle
 START_MEDIA = None
-JOIN_CACHE = {}
+VERIFIED_USERS = set()
 
 # --- HELPER: PRIVATE ONLY CHECK ---
 async def is_private_only(event):
@@ -62,35 +62,18 @@ async def global_security_check(event):
         
     return True
 
-async def check_user_joined(user_id, force=False):
-    # Sirf Owner bypass kar sakta hai
-    if user_id == ADMIN_ID: 
-        return True 
-    if not MUST_JOIN: 
-        return True 
-    
-    now = asyncio.get_event_loop().time()
-    
-    # 1. Cache Check (Bypass if not forced)
-    if not force:
-        if user_id in JOIN_CACHE and now < JOIN_CACHE[user_id]:
-            return True
-
-    try:
-        # 2. Strict API Check
-        await bot(GetParticipantRequest(channel=MUST_JOIN, user_id=user_id))
-        
-        # Success: Cache it
-        JOIN_CACHE[user_id] = now + 300 
+async def check_user_joined(user_id):
+    # Admin aur pehle se verified log allowed hain
+    if user_id == ADMIN_ID or user_id in VERIFIED_USERS or not MUST_JOIN:
         return True
-        
-    except UserNotParticipantError:
-        if user_id in JOIN_CACHE: del JOIN_CACHE[user_id]
-        return False
-    except Exception as e:
-        # 🔥 DEBUG: Agar yahan error aa raha hai toh Railway Logs me dikhega
-        print(f"❌ CRITICAL JOIN ERROR: {e}")
-        # Error par bypass mat karo, False return karo taaki join msg dikhe
+    
+    try:
+        # Ek last automated check (Sirf safety ke liye)
+        await bot(GetParticipantRequest(channel=MUST_JOIN, user_id=user_id))
+        VERIFIED_USERS.add(user_id) # List me daal do
+        return True
+    except:
+        # Agar join nahi kiya toh False
         return False
 
 # --- 1. MAIN MENU LOGIC ---
@@ -382,23 +365,26 @@ async def callback_handler(event):
     # 🔥 3. VERIFY JOIN CALLBACK
     elif data == "verify_join":
         user_id = event.sender_id
-        await event.answer("🛡️ Checking community status...", alert=False)
         
-        if await check_user_joined(user_id):
-            await event.answer("✅ Access Granted!", alert=False)
-            await event.delete() # Join message delete karo
+        # 🔥 Jaisa tune kaha: Button dabate hi "True" maan lo
+        VERIFIED_USERS.add(user_id)
+        
+        await event.answer("✅ Access Granted! Empire Core Unlocked.", alert=False)
+        
+        try:
+            await event.delete() # Join msg uda do
+        except:
+            pass
             
-            # 🔥 Verification ke baad Cool Animation
-            anim = await event.respond("<code>🔓 Unlocking Empire Systems...</code>", parse_mode='html')
-            await asyncio.sleep(1.5)
-            await anim.edit(f"<code>{BEAR_ASCII}</code>", parse_mode='html')
-            
-            await asyncio.sleep(2.5)
-            await anim.delete()
-            
-            await send_start_menu(event)
-        else:
-            await event.answer("⚠️ Not joined yet! Please join @darkconsolecommunity first.", alert=True)
+        # Professional Sequence (Direct to Bear)
+        anim = await event.respond("<code>🔓 Initializing...</code>", parse_mode='html')
+        await asyncio.sleep(1)
+        await anim.edit(f"<code>{BEAR_ASCII}</code>", parse_mode='html')
+        
+        await asyncio.sleep(2.5)
+        await anim.delete()
+        
+        await send_start_menu(event)
     
     elif data == "rules":
         await event.answer("1. One trial per user.\n2. No spamming commands.\n3. Respect community", alert=True)
