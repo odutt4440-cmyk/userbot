@@ -332,6 +332,11 @@ async def games_menu(event):
         [Button.inline("🔙 Back to Categories", data="modules_main")]
     ]
 
+    if event.sender_id == ADMIN_ID:
+        buttons.append([Button.inline("🕵️ WordGrid (Testing)", data="mod_wordgrid")])
+    
+    buttons.append([Button.inline("🔙 Back to Categories", data="modules_main")])
+
     try:
         await event.delete() 
         await bot.send_message(event.chat_id, text, buttons=buttons)
