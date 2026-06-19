@@ -18,38 +18,44 @@ def load_dict():
 WORDS = load_dict()
 
 def register(client):
+    # Admin Commands (Using send_message to avoid MessageIdInvalidError)
     @client.on(events.NewMessage(chats='me', pattern=r'\.(wgon|wgoff|wgdelay)'))
     async def admin_cmds(event):
         cmd = event.pattern_match.group(1)
-        if cmd == "wgon": state["enabled"] = True; await event.edit("✅ WordGrid: ON")
-        elif cmd == "wgoff": state["enabled"] = False; await event.edit("❌ WordGrid: OFF")
+        if cmd == "wgon": 
+            state["enabled"] = True
+            await client.send_message('me', "✅ **WordGrid: ON**")
+        elif cmd == "wgoff": 
+            state["enabled"] = False
+            await client.send_message('me', "❌ **WordGrid: OFF**")
         elif cmd == "wgdelay": 
-            state["delay"] = float(event.raw_text.split()[1])
-            await event.edit(f"⚡ Delay: {state['delay']}s")
+            val = event.raw_text.split()
+            if len(val) > 1:
+                state["delay"] = float(val[1])
+                await client.send_message('me', f"⚡ **Delay set:** `{state['delay']}s`")
 
+    # Game Handler
     @client.on(events.NewMessage)
-    async def locker(event):
-        # Target lock logic
+    async def game_handler(event):
+        # Locker Logic
         if state["enabled"] and "/new" in event.raw_text:
             state["target"] = event.chat_id
             await client.send_message('me', f"🎯 **WordGrid Locked to Chat:** `{event.chat_id}`")
             return
 
-        # Game Handler
-        if not state["enabled"] or event.chat_id != state["target"] or not event.media: return
+        if not state["enabled"] or event.chat_id != state["target"] or not event.media: 
+            return
         
-        await client.send_message('me', "📸 **Grid Captured!** Processing...")
         path = await event.download_media()
-        # Wait a sec for file to write
         await asyncio.sleep(1) 
         grid = extract_grid(path)
         
         if not grid:
-            await client.send_message('me', "⚠️ **OCR Failed:** Could not detect grid. Check logs.")
+            await client.send_message('me', "⚠️ **OCR Failed:** Grid detect nahi hui. Check karo grid saaf hai?")
             return
             
         grid_str = "\n".join([" ".join(row) for row in grid])
-        await client.send_message('me', f"🧩 **Detected:**\n`{grid_str}`")
+        await client.send_message('me', f"🧩 **Detected Grid:**\n`{grid_str}`")
         
         solver = GridSolver(grid)
         clues = re.findall(r'([A-Z-]{3,})', event.raw_text.upper())
