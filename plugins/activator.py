@@ -4,7 +4,13 @@ from bot_instance import bot
 from telethon import events, Button
 from core.session_manager import SessionManager
 from config import ADMIN_ID
-from database import is_subscribed, global_security_check, get_user_plan_type, get_owner_logs
+from database import (
+    is_subscribed, 
+    global_security_check, 
+    get_user_plan_type, 
+    get_owner_logs,
+    is_module_in_testing # 🔥 Ye import zaroori hai
+)
 
 # 🔥 MODULE CATEGORY MAP
 CATEGORY_MAP = {
@@ -26,6 +32,7 @@ NAME_MAP = {
 
 def get_clean_name(data_bytes):
     data = data_bytes.decode("utf-8")
+    # Universal Cleaner: Sab prefixes saaf kar deta hai
     name = data.replace("activate_", "").replace("force_start_", "").replace("stop_", "").replace("start_ub_", "").replace("mod_", "")
     return NAME_MAP.get(name, name)
 
@@ -41,7 +48,7 @@ async def activate_module(event):
     data = event.data.decode("utf-8")
     user_id = event.sender_id
     
-    # 🛡️ Subscription Check
+    # 🛡️ 1. Subscription Check
     if not await is_subscribed(user_id):
         await event.edit(
             "⚠️ **Premium Access Required**", 
@@ -52,13 +59,21 @@ async def activate_module(event):
         )
         return
 
-    # 🔥 LOGIC: Pack vs Single Module
+    # 🔍 Clean Target Name
+    target_name = get_clean_name(event.data)
+
+    # 🛡️ 2. UNIVERSAL TESTING LOCK (Future Proof)
+    # Ye line har module/button ko check karegi ki wo Admin-Only Testing me hai ya nahi
+    if await is_module_in_testing(target_name) and user_id != ADMIN_ID:
+        return await event.answer(
+            f"🧪 {target_name.upper()} is currently in Internal Testing.\n\nPlease wait for the public rollout!", 
+            alert=True
+        )
+
+    # 🔥 3. LOGIC: Pack vs Single Module
     if "_pack" in data:
-        # User ne poora folder select kiya hai
         final_load_target = data.replace("mod_", "").replace("activate_", "")
     else:
-        # Standard Single Module selection
-        target_name = get_clean_name(event.data)
         plan = await get_user_plan_type(user_id)
         final_load_target = target_name
         
@@ -105,7 +120,7 @@ async def force_start(event):
     await asyncio.sleep(1.5)
     await activate_module(event)
 
-# --- 👑 EMPIRE TURBO DEPLOY MENU (The 3 Folder Option) ---
+# --- 👑 EMPIRE TURBO DEPLOY MENU ---
 @bot.on(events.CallbackQuery(data="activate_all"))
 async def activate_all_handler(event):
     if not event.is_private: return
@@ -151,15 +166,3 @@ async def owner_logs(event):
         os.remove("logs.txt")
     else:
         await event.reply(msg)
-        
-@bot.on(events.NewMessage(pattern=r'(?i)^/testwg'))
-async def debug_wordgrid(event):
-    if event.sender_id != ADMIN_ID:
-        return # Chup-chap ignore karo
-    
-    user_id = event.sender_id
-    await event.reply("🧪 **WordGrid Testing Mode**\nInitializing OCR Engine and Solver...")
-    
-    # Direct session manager call
-    result = await SessionManager.start_userbot(user_id, "wordgrid")
-    await event.reply(result)
