@@ -3,10 +3,7 @@ class GridSolver:
         self.grid = grid
         self.rows = len(grid)
         self.cols = len(grid[0]) if self.rows > 0 else 0
-        self.directions = [
-            (0, 1), (0, -1), (1, 0), (-1, 0), 
-            (1, 1), (1, -1), (-1, 1), (-1, -1)
-        ]
+        self.directions = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
 
     def solve(self, word):
         word = word.upper()
