@@ -329,7 +329,7 @@ async def games_menu(event):
     buttons = [
         [Button.inline("WordSeek", data="mod_wordseek"), Button.inline("WordChain", data="mod_wordchain")],
         [Button.inline("Octopus", data="mod_octopus"), Button.inline("Wordly", data="mod_wordly")],
-        [Button.inline("🕵️ WordGrid", data="mod_wordgrid")],
+        #[Button.inline("🕵️ WordGrid", data="mod_wordgrid")],
         [Button.inline("🔙 Back to Categories", data="modules_main")]
     ]
 
