@@ -10,8 +10,5 @@ aiohttp
 pillow
 wordfreq
 certifi
-pytesseract
-opencv-python-headless
-numpy
 
 
