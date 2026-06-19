@@ -7,14 +7,13 @@ from collections import Counter
 from telethon import events
 
 # =========================================
-# LOAD DICTIONARY (Shared & Local Cache)
+# LOAD DICTIONARY
 # =========================================
 FOLDER = os.path.dirname(__file__)
 DICT_CACHE = os.path.join(FOLDER, "wordly_dict.txt")
 
 def load_words():
     valid = []
-    # Dictionary cache check taaki startup fast ho
     if not os.path.exists(DICT_CACHE):
         url = "https://raw.githubusercontent.com/dolph/dictionary/master/enable1.txt"
         try:
@@ -32,142 +31,134 @@ def load_words():
 
 WORDS_DB = load_words()
 
-# =========================
-# THE MODULE REGISTER
-# =========================
 def register(client):
-    # --- Per-User State ---
+    # State management
     client.w_target_chat = None
     client.w_enabled = True
     client.w_loop = False
     client.w_loop_cmd = "/new" 
-    client.w_delay = 0.0 # Instant support
+    client.w_delay = 0.5
     client.w_used_words = set()
     client.w_current_letters = None
+    client.w_can_repeat = False # New rule detection
 
-    # --- SOLVER ---
+    # --- ADVANCED SOLVER ---
     def solve(letters):
-        allowed = set(letters.lower())
+        if not letters: return None
+        allowed_set = set(letters.lower())
+        board_counts = Counter(letters.lower())
+        
         candidates = []
         for word in WORDS_DB:
             if word in client.w_used_words: continue
-            # Game rule: Letters board me se hi word banna chahiye
-            if all(c in allowed for c in word):
-                candidates.append(word)
+            
+            word_set = set(word)
+            # Rule check: Kya word ke saare letters board par hain?
+            if word_set.issubset(allowed_set):
+                # Agar repeat allowed nahi hai (WordgamezBot rule)
+                if not client.w_can_repeat:
+                    word_counts = Counter(word)
+                    if all(word_counts[c] <= board_counts[c] for c in word_counts):
+                        candidates.append(word)
+                else:
+                    # Agar repeat allowed hai (WordlyGamingBot rule)
+                    candidates.append(word)
         
         if not candidates: return None
+        # Solve longest available word
         candidates.sort(key=len, reverse=True)
         best = candidates[0]
         client.w_used_words.add(best)
         return best
 
-    # --- ROBUST LETTER EXTRACTOR (Support for 2 Bots) ---
+    # --- SMART LETTER EXTRACTOR (Support Both Bots) ---
     def extract_letters(text):
-        # Clean text for easier parsing
         text_up = text.upper()
         
-        # Mode 1: @WordgamezBot (A, B, C, D format)
-        if "," in text:
-            return "".join(re.findall(r"[A-Z]", text_up))
-        
-        # Mode 2: @WordlyGamingBot (A B C D format after board header)
+        # Mode 1: @WordgamezBot (Look for line with most commas)
         lines = text_up.splitlines()
-        for i, line in enumerate(lines):
-            if "LETTERS BOARD" in line or "BOARD:" in line:
-                if i + 1 < len(lines):
-                    return "".join(re.findall(r"[A-Z]", lines[i+1]))
+        for line in lines:
+            if line.count(",") >= 4:
+                return "".join(re.findall(r"[A-Z]", line))
         
-        # Fallback: Just grab all single uppercase letters
-        return "".join(re.findall(r"\b[A-Z]\b", text_up))
+        # Mode 2: @WordlyGamingBot (Look for letters inside brackets or special emojis)
+        # Regex to find letters between ( ) or emojis
+        match = re.search(r"[\(\u2934]\s*([A-Z\s]+)\s*[\)\u2935]", text_up)
+        if match:
+            return "".join(re.findall(r"[A-Z]", match.group(1)))
+            
+        # Fallback: Just get the biggest block of single letters
+        all_caps = re.findall(r"\b[A-Z]\b", text_up)
+        if len(all_caps) >= 5:
+            return "".join(all_caps)
+            
+        return None
 
     # =========================================
-    # SAVED MESSAGES COMMANDS (Control Panel)
+    # CONTROL PANEL (.won, .woff, .wloop, .wdelay, .wstatus)
     # =========================================
     @client.on(events.NewMessage(chats='me'))
     async def control_panel(event):
         text = event.raw_text.lower().strip()
-        
         if text == ".won":
             client.w_enabled = True
-            await event.edit("✅ **Wordly Solver: ON**")
+            await event.edit("✅ **Wordly Master: Online**")
         elif text == ".woff":
             client.w_enabled = False
-            await event.edit("❌ **Wordly Solver: OFF**")
+            await event.edit("❌ **Wordly Master: Offline**")
         elif text.startswith(".wloop"):
-            if "on" in text:
-                client.w_loop = True
-                await event.edit("🔄 **Auto-Loop: ON**")
-            else:
-                client.w_loop = False
-                await event.edit("❌ **Auto-Loop: OFF**")
+            client.w_loop = "on" in text
+            await event.edit(f"{'🔄' if client.w_loop else '❌'} **Auto-Loop:** {'ON' if client.w_loop else 'OFF'}")
         elif text.startswith(".wdelay"):
             try:
                 client.w_delay = float(text.split()[1])
-                await event.edit(f"⚡ **Delay:** {client.w_delay}s")
+                await event.edit(f"⚡ **Delay Set to:** {client.w_delay}s")
             except: pass
         elif text == ".wstatus":
-            status = (
-                "📊 **Wordly Status**\n\n"
-                f"**Target:** `{client.w_target_chat}`\n"
-                f"**Enabled:** `{client.w_enabled}`\n"
-                f"**Loop:** `{client.w_loop}`\n"
-                f"**Delay:** `{client.w_delay}`"
-            )
-            await event.edit(status)
+            await event.edit(f"📊 **Wordly Stats**\nEnabled: `{client.w_enabled}`\nTarget Chat: `{client.w_target_chat}`\nRepeat Allowed: `{client.w_can_repeat}`")
 
     # =========================================
-    # AUTO TARGET DETECTION (Outgoing)
+    # TARGET & SOLVE LOGIC
     # =========================================
     @client.on(events.NewMessage(outgoing=True))
     async def detect_target(event):
-        text = event.raw_text.lower()
-        if text.startswith("/new"):
-            # Save chat and the EXACT command used (/new or /new@bot)
+        if event.raw_text.lower().startswith("/new"):
             client.w_target_chat = event.chat_id
             client.w_loop_cmd = event.raw_text
             client.w_used_words.clear()
-            client.w_current_letters = None
-            await client.send_message("me", f"🎯 **Wordly Locked:** `{event.chat_id}`\nLoop Command: `{client.w_loop_cmd}`")
+            await client.send_message("me", f"🎯 **Wordly Locked:** `{event.chat_id}`\nCommand: `{client.w_loop_cmd}`")
 
-    # =========================================
-    # GAME HANDLER (The Engine)
-    # =========================================
     @client.on(events.NewMessage)
     async def game_handler(event):
-        if not client.w_enabled or client.w_target_chat is None: return
+        if not client.w_enabled or not client.w_target_chat: return
         if event.chat_id != client.w_target_chat: return
+        if event.out: return # Bot should not reply to itself
 
         msg = event.raw_text
-        if not msg: return
+        msg_up = msg.upper()
 
-        # 1. New Game Detection
-        if "TOTAL: 0/" in msg or "MODE IS LIVE" in msg.upper():
+        # Detection: Is it a game board?
+        is_game = "TOTAL:" in msg_up or "LETTERS BOARD" in msg_up or "REMAINING TIME" in msg_up or "MODE IS LIVE" in msg_up
+        
+        if is_game:
+            # Rule detection: Can letters repeat?
+            client.w_can_repeat = "LETTERS CAN BE REPEATED" in msg_up
+            
             letters = extract_letters(msg)
             if letters:
+                # If it's a new round (Total 0), reset used words
+                if "TOTAL: 0/" in msg_up or "0/20" in msg_up:
+                    client.w_used_words.clear()
+                
                 client.w_current_letters = letters
-                client.w_used_words.clear()
-                # Solve first word immediately
                 word = solve(client.w_current_letters)
                 if word:
-                    async with client.action(event.chat_id, 'typing'):
-                        if client.w_delay > 0: await asyncio.sleep(client.w_delay)
-                        await client.send_message(event.chat_id, word)
-            return
-
-        # 2. Game End Detection (For Loop)
-        if any(x in msg.upper() for x in ["GAME OVER", "CONGRATS", "TOTAL: 20/20"]):
-            client.w_current_letters = None
-            if client.w_loop:
-                await asyncio.sleep(3)
-                await client.send_message(client.w_target_chat, client.w_loop_cmd)
-            return
-
-        # 3. Continuous Solving
-        if client.w_current_letters and ("TOTAL:" in msg or "remaining time" in msg.lower()):
-            if event.out: return # Don't reply to self
-            
-            word = solve(client.w_current_letters)
-            if word:
-                async with client.action(event.chat_id, 'typing'):
                     if client.w_delay > 0: await asyncio.sleep(client.w_delay)
                     await client.send_message(event.chat_id, word)
+            return
+
+        # Auto-Restart Round
+        if any(x in msg_up for x in ["GAME OVER", "CONGRATS", "20/20"]):
+            if client.w_loop:
+                await asyncio.sleep(5)
+                await client.send_message(client.w_target_chat, client.w_loop_cmd)
