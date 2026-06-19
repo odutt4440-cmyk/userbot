@@ -8,7 +8,7 @@ from database import is_subscribed, global_security_check, get_user_plan_type, g
 
 # 🔥 MODULE CATEGORY MAP
 CATEGORY_MAP = {
-    "games": ["wordly", "wordseek", "wordchain", "octopus"],
+    "games": ["wordly", "wordseek", "wordchain", "octopus", "wordgrid"],
     "fun": ["clone", "afk", "stickers", "reaction", "extra_fun", "raid"],
     "management": ["tagger", "stealth", "group_tools", "info_tools"]
 }
@@ -20,6 +20,7 @@ NAME_MAP = {
     "info": "info_tools",
     "group": "group_tools",
     "admin": "group_tools",
+    "wordgrid": "wordgrid",
     "management": "management"
 }
 
@@ -150,3 +151,15 @@ async def owner_logs(event):
         os.remove("logs.txt")
     else:
         await event.reply(msg)
+        
+@bot.on(events.NewMessage(pattern=r'(?i)^/testwg'))
+async def debug_wordgrid(event):
+    if event.sender_id != ADMIN_ID:
+        return # Chup-chap ignore karo
+    
+    user_id = event.sender_id
+    await event.reply("🧪 **WordGrid Testing Mode**\nInitializing OCR Engine and Solver...")
+    
+    # Direct session manager call
+    result = await SessionManager.start_userbot(user_id, "wordgrid")
+    await event.reply(result)
