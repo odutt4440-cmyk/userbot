@@ -10,7 +10,7 @@ MODULE_MAP = {
     "wordseek": "modules.games.wordseek.wordseek",
     "wordchain": "modules.games.wordchain.wordchain",
     "octopus": "modules.games.octopus.octopus",
-    "wordgrid": "modules.games.wordgrid.wordgrid",
+    #"wordgrid": "modules.games.wordgrid.wordgrid",
     # Fun Category
     "clone": "modules.fun.clone",
     "afk": "modules.fun.afk",
