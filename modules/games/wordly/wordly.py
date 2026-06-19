@@ -31,8 +31,7 @@ def load_words():
 WORDS_DB = load_words()
 
 def register(client):
-    # State tracking per BOT (to play multiple bots in same GC)
-    # Format: {bot_id: {'letters': str, 'used': set(), 'can_repeat': bool}}
+    # State tracking per BOT ID
     client.w_game_states = {}
     client.w_enabled = True
     client.w_loop = False
@@ -41,7 +40,7 @@ def register(client):
     # --- ADVANCED SOLVER ---
     def solve(bot_id):
         state = client.w_game_states.get(bot_id)
-        if not state or not state['letters']: return None
+        if not state or not state.get('letters'): return None
         
         allowed_set = set(state['letters'].lower())
         board_counts = Counter(state['letters'].lower())
@@ -64,16 +63,23 @@ def register(client):
     # --- ROBUST LETTER EXTRACTOR ---
     def extract_letters(text):
         text_up = text.upper()
-        if "," in text: # WordgamezBot
+        # WordgamezBot (O, S, G...)
+        if "," in text:
             match = re.search(r"(?:^|\n)\s*([A-Z],\s*)+[A-Z]\s*(?:\n|$)", text_up)
             if match: return "".join(re.findall(r"[A-Z]", match.group(0)))
-        # WordlyGamingBot
+        # WordlyGamingBot (Active Letters: S A F...)
+        if "ACTIVE LETTERS:" in text_up:
+            part = text_up.split("ACTIVE LETTERS:")[1].splitlines()[0]
+            return "".join(re.findall(r"[A-Z]", part))
+        # Brackets/Emojis
         match = re.search(r"[\(\u2934]\s*([A-Z\s]+)\s*[\)\u2935]", text_up)
         if match: return "".join(re.findall(r"[A-Z]", match.group(1)))
-        return "".join(re.findall(r"\b[A-Z]\b", text_up))
+        # Fallback
+        all_caps = re.findall(r"\b[A-Z]\b", text_up)
+        return "".join(all_caps) if len(all_caps) >= 5 else None
 
     # =========================================
-    # CONTROL PANEL (.won, .woff, .wloop, .wdelay)
+    # CONTROL PANEL
     # =========================================
     @client.on(events.NewMessage(chats='me'))
     async def control_panel(event):
@@ -94,7 +100,7 @@ def register(client):
             except: pass
 
     # =========================================
-    # GAME ENGINE
+    # GAME ENGINE (Continuous Play Fix)
     # =========================================
     @client.on(events.NewMessage)
     async def game_handler(event):
@@ -103,60 +109,63 @@ def register(client):
         msg = event.raw_text
         msg_up = msg.upper()
         bot_id = event.sender_id
+        chat_id = event.chat_id
 
-        # 1. Catch SYNC/REJECTION (Wait, someone found it? Or invalid word?)
-        # Matches: "found 'Word'", "Accept! ... — WORD", "WORD is already found", "WORD is not a valid"
-        rejection_match = re.search(r'(?i)FOUND ["«](\w+)["»]|—\s*(\w+)|(\w+)\s*IS ALREADY FOUND|«(\w+)»\s*IS NOT A VALID', msg)
-        if rejection_match:
-            # Find which group captured the word
-            found_word = next(w for w in rejection_match.groups() if w).lower()
-            if bot_id in client.w_game_states:
+        # 1. SYNC: Always record words found by anyone
+        found_match = re.search(r'(?i)FOUND ["«](\w+)["»]|—\s*(\w+)|ACCEPTED! [\w\s\+]+ — (\w+)', msg)
+        if found_match:
+            found_word = next(w for w in found_match.groups() if w).lower()
+            if bot_id not in client.w_game_states:
+                client.w_game_states[bot_id] = {'letters': None, 'used': {found_word}, 'can_repeat': False}
+            else:
                 client.w_game_states[bot_id]['used'].add(found_word)
-                # 🔥 CRITICAL FIX: Agar Userbot ka bheja word reject hua, turant naya try karo
-                if "ALREADY FOUND" in msg_up or "NOT A VALID" in msg_up:
-                    word = solve(bot_id)
-                    if word:
-                        async with client.action(event.chat_id, 'typing'):
-                            await asyncio.sleep(client.w_delay)
-                            await event.reply(word)
-            return
 
-        # 2. Board Detection & Progress
+        # 2. PROGRESS & BOARD DETECTION
         progress_match = re.search(r"(\d+)\s*/\s*(\d+)", msg)
-        is_board = "LETTERS BOARD" in msg_up or "MODE IS LIVE" in msg_up or progress_match
-
-        if is_board:
+        is_board_msg = "LETTERS BOARD" in msg_up or "MODE IS LIVE" in msg_up or "ACTIVE LETTERS" in msg_up or progress_match
+        
+        if is_board_msg:
             letters = extract_letters(msg)
-            if not letters: return
-
-            # Initialize or Reset Bot State
+            
+            # Init state for bot if new
             if bot_id not in client.w_game_states or "0/" in msg:
                 client.w_game_states[bot_id] = {
                     'letters': letters,
-                    'used': set(),
-                    'can_repeat': "LETTERS CAN BE REPEATED" in msg_up,
-                    'goal': int(progress_match.group(2)) if progress_match else 20
+                    'used': client.w_game_states[bot_id]['used'] if bot_id in client.w_game_states else set(),
+                    'can_repeat': "LETTERS CAN BE REPEATED" in msg_up
                 }
-            else:
+            
+            if letters:
                 client.w_game_states[bot_id]['letters'] = letters
 
-            # Solve if not finished
+            # Logic to keep playing
             if progress_match:
                 curr, goal = int(progress_match.group(1)), int(progress_match.group(2))
                 if curr >= goal:
                     if client.w_loop:
                         await asyncio.sleep(5)
-                        await client.send_message(event.chat_id, "/new")
+                        await client.send_message(chat_id, "/new")
                     return
 
+            # Solve and send WITHOUT replying
             word = solve(bot_id)
             if word:
-                async with client.action(event.chat_id, 'typing'):
+                async with client.action(chat_id, 'typing'):
                     await asyncio.sleep(client.w_delay)
-                    await event.reply(word)
+                    # 🔥 No Reply: Sending direct message to chat
+                    await client.send_message(chat_id, word)
+            return
 
-        # 3. Game Over Loop
+        # 3. INSTANT RECOVERY on Rejection
+        if "ALREADY FOUND" in msg_up or "NOT A VALID" in msg_up:
+            word = solve(bot_id)
+            if word:
+                async with client.action(chat_id, 'typing'):
+                    await asyncio.sleep(client.w_delay)
+                    await client.send_message(chat_id, word)
+
+        # 4. GAME OVER Loop Fallback
         elif any(x in msg_up for x in ["GAME OVER", "CONGRATS"]):
             if client.w_loop:
                 await asyncio.sleep(5)
-                await client.send_message(event.chat_id, "/new")
+                await client.send_message(chat_id, "/new")
