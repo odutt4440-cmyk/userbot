@@ -110,7 +110,9 @@ def register(client):
             client.w_last_cmd = event.raw_text
             # Clear previous session data for this chat
             client.w_game_states = {}
-            log.info(f"🎯 Wordly Locked to: {event.chat_id}")
+            
+            
+            await client.send_message("me", f"🎯 **Wordly Locked to Chat:** `{event.chat_id}`\nMode: `{client.w_last_cmd}`")
 
     # =========================================
     # GAME ENGINE (Continuous Play Fix)
