@@ -13,8 +13,5 @@ certifi
 pytesseract
 opencv-python-headless
 numpy
-easyocr
-opencv-python-headless
-torch
-torchvision
+
 
