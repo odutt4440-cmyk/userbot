@@ -1,14 +1,19 @@
-
-import re, asyncio, gc, os
-from telethon import events, Button
+import re, asyncio, gc, os, requests
+from telethon import events
 from .ocr_engine import extract_grid
 from .solver import GridSolver
 
+DICT_URL = "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
 DICT_FILE = os.path.join(os.path.dirname(__file__), "wordgrid_dict.txt")
 state = {"enabled": False, "target": None, "delay": 0.5}
 
 def load_dict():
-    if not os.path.exists(DICT_FILE): return set()
+    # Agar local file nahi hai toh GitHub se download karo
+    if not os.path.exists(DICT_FILE):
+        try:
+            data = requests.get(DICT_URL).text.splitlines()
+            with open(DICT_FILE, "w") as f: f.write("\n".join(data))
+        except: return set()
     with open(DICT_FILE, "r") as f: return set(line.strip().upper() for line in f)
 
 WORDS = load_dict()
@@ -25,9 +30,9 @@ def register(client):
 
     @client.on(events.NewMessage(outgoing=True))
     async def locker(event):
-        if state["enabled"] and ("/new" in event.raw_text):
+        if state["enabled"] and "/new" in event.raw_text:
             state["target"] = event.chat_id
-            await event.respond("🎯 Locked to this chat.")
+            await client.send_message('me', f"🎯 **WordGrid Locked to:** `{event.chat_id}`")
 
     @client.on(events.NewMessage)
     async def game_handler(event):
@@ -43,20 +48,28 @@ def register(client):
         
         # Grid Solving
         if event.media:
-            # Clue extraction (e.g., S--- (4))
-            clues = re.findall(r'([A-Z-]{3,})', event.raw_text.upper())
+            await client.send_message('me', "📸 **Grid Captured!** Solving...")
             path = await event.download_media()
             grid = extract_grid(path)
             
             if grid:
                 solver = GridSolver(grid)
+                clues = re.findall(r'([A-Z-]{3,})', event.raw_text.upper())
+                found_match = False
+                
                 for clue in clues:
                     pattern = f"^{clue.replace('-', '.')}$"
                     for word in WORDS:
                         if re.match(pattern, word) and solver.solve(word):
+                            await client.send_message('me', f"✅ **Found:** `{word}`")
                             async with event.client.action(event.chat_id, 'typing'):
                                 await asyncio.sleep(state["delay"])
                                 await event.client.send_message(event.chat_id, word)
-                                break
-                del grid
-                gc.collect()
+                            found_match = True
+                            break
+                if not found_match: await client.send_message('me', "❌ **Solver:** No valid words found.")
+            else:
+                await client.send_message('me', "⚠️ **OCR Error:** Failed to process image.")
+            
+            del grid
+            gc.collect()
