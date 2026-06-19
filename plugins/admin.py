@@ -26,6 +26,8 @@ from database import (
     db, # MongoDB Object
     get_ban_info,
     users_db_proxy, 
+    set_module_testing,
+    is_module_in_testing,
     subs_db_proxy
 )
 
@@ -100,6 +102,28 @@ async def logout_handler(event):
         except: pass
     await remove_user_session(user_id)
     await event.reply(f"✅ **Logout Done:** `{user_id}` session terminated.")
+
+# --- 6. TESTING CONTROL (OWNER ONLY) ---
+
+@bot.on(events.NewMessage(pattern=r'(?i)^/testmode (\w+) (on|off)'))
+async def toggle_test_mode(event):
+    if event.sender_id != ADMIN_ID: return
+    
+    module = event.pattern_match.group(1).lower()
+    mode = event.pattern_match.group(2).lower()
+    status = (mode == "on")
+    
+    await set_module_testing(module, status)
+    
+    # Professional Status Message
+    status_text = "🧪 LOCKED (Internal Testing)" if status else "🌍 PUBLIC (Everyone)"
+    msg = (
+        f"🛡️ **Module Control Update**\n\n"
+        f"📦 **Module:** `{module.upper()}`\n"
+        f"📊 **New Status:** `{status_text}`\n\n"
+        f"Admin bypass is active. Users will be blocked until turned OFF."
+    )
+    await event.reply(msg)
 
 # --- 3. BILLING (APPROVE/CANCEL/TRANSFER) ---
 
@@ -252,6 +276,7 @@ async def sudo_help(event):
         help_msg += "  👉 _Ex: /transfer 111 222_\n"
         help_msg += "• `/reset_trial <ID>` - Allow trial again\n"
         help_msg += "• `/maintenance <on/off> <msg>` - Master Switch\n"
+        help_msg += "• `/testmode <name> on/off` - Toggle Admin Lock\n" 
         help_msg += "• `/getdb` - Download Cloud JSON Backup\n\n"
 
     # --- BAN MANAGEMENT ---
