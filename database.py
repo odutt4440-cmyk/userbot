@@ -457,6 +457,15 @@ async def get_owner_logs():
         })
     return logs
 
+async def set_module_testing(module_name, status):
+    """Sets a module to testing mode (on/off)."""
+    await set_setting(f"TESTMODE_{module_name.upper()}", "on" if status else "off")
+
+async def is_module_in_testing(module_name):
+    """Checks if a module is in testing mode."""
+    res = await get_setting(f"TESTMODE_{module_name.upper()}")
+    return res == "on"
+
 # --- 7. PROXY OBJECTS FOR ADMIN COMMANDS ---
 class CollectionProxy:
     def __init__(self, table_name):
