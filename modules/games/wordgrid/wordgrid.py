@@ -3,15 +3,14 @@ from telethon import events
 from .ocr_engine import extract_grid
 from .solver import GridSolver
 
-DICT_URL = "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
 DICT_FILE = os.path.join(os.path.dirname(__file__), "wordgrid_dict.txt")
 state = {"enabled": False, "target": None, "delay": 0.5}
 
 def load_dict():
-    # Agar local file nahi hai toh GitHub se download karo
     if not os.path.exists(DICT_FILE):
         try:
-            data = requests.get(DICT_URL).text.splitlines()
+            url = "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
+            data = requests.get(url).text.splitlines()
             with open(DICT_FILE, "w") as f: f.write("\n".join(data))
         except: return set()
     with open(DICT_FILE, "r") as f: return set(line.strip().upper() for line in f)
@@ -48,28 +47,29 @@ def register(client):
         
         # Grid Solving
         if event.media:
-            await client.send_message('me', "📸 **Grid Captured!** Solving...")
             path = await event.download_media()
             grid = extract_grid(path)
             
             if grid:
-                solver = GridSolver(grid)
-                clues = re.findall(r'([A-Z-]{3,})', event.raw_text.upper())
-                found_match = False
+                # Preview Grid in Saved Messages
+                grid_str = "\n".join([" ".join(row) for row in grid])
+                await client.send_message('me', f"🧩 **Grid Detected:**\n`{grid_str}`")
                 
-                for clue in clues:
+                solver = GridSolver(grid)
+                clue_lines = re.findall(r'([A-Z-]{3,})', event.raw_text.upper())
+                length_matches = re.findall(r'\((\d+)\)', event.raw_text)
+                
+                for i, clue in enumerate(clue_lines):
+                    target_len = int(length_matches[i]) if i < len(length_matches) else len(clue.replace('-', ''))
                     pattern = f"^{clue.replace('-', '.')}$"
+                    
                     for word in WORDS:
-                        if re.match(pattern, word) and solver.solve(word):
-                            await client.send_message('me', f"✅ **Found:** `{word}`")
+                        if len(word) == target_len and re.match(pattern, word) and solver.solve(word):
+                            await client.send_message('me', f"✅ **Match Found:** `{word}`")
                             async with event.client.action(event.chat_id, 'typing'):
                                 await asyncio.sleep(state["delay"])
                                 await event.client.send_message(event.chat_id, word)
-                            found_match = True
                             break
-                if not found_match: await client.send_message('me', "❌ **Solver:** No valid words found.")
             else:
                 await client.send_message('me', "⚠️ **OCR Error:** Failed to process image.")
-            
-            del grid
             gc.collect()
