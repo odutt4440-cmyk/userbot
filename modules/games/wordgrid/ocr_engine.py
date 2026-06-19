@@ -9,7 +9,7 @@ def extract_grid(image_path):
         config = "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         text = pytesseract.image_to_string(thresh, config=config)
         
-        mapping = {'5': 'S', '0': 'O', '1': 'I', '8': 'B', 'Q': 'O'} # OCR fixes
+        mapping = {'5': 'S', '0': 'O', '1': 'I', '8': 'B', 'Q': 'O'}
         matrix = []
         for line in text.splitlines():
             row = [mapping.get(c, c) for c in line.replace(" ", "") if c.isalpha() or c in mapping]
