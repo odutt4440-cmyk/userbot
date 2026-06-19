@@ -4,7 +4,7 @@ import re
 import asyncio
 import os
 from collections import Counter
-from telethon import events
+from telethon import events, functions, types
 
 # =========================================
 # LOAD DICTIONARY
@@ -21,7 +21,6 @@ def load_words():
             with open(DICT_CACHE, "w") as f:
                 f.write("\n".join(data))
         except: return []
-
     with open(DICT_CACHE, "r") as f:
         for w in f:
             w = w.strip().lower()
@@ -32,17 +31,17 @@ def load_words():
 WORDS_DB = load_words()
 
 def register(client):
-    # State management
+    # --- Per-User State ---
     client.w_target_chat = None
     client.w_enabled = True
-    client.w_loop = False
+    client.w_loop = False # 🔥 Default OFF as requested
     client.w_loop_cmd = "/new" 
     client.w_delay = 0.5
     client.w_used_words = set()
     client.w_current_letters = None
-    client.w_can_repeat = False # New rule detection
+    client.w_can_repeat = False
 
-    # --- ADVANCED SOLVER ---
+    # --- ACCURATE SOLVER ---
     def solve(letters):
         if not letters: return None
         allowed_set = set(letters.lower())
@@ -51,48 +50,37 @@ def register(client):
         candidates = []
         for word in WORDS_DB:
             if word in client.w_used_words: continue
-            
             word_set = set(word)
-            # Rule check: Kya word ke saare letters board par hain?
             if word_set.issubset(allowed_set):
-                # Agar repeat allowed nahi hai (WordgamezBot rule)
                 if not client.w_can_repeat:
+                    # Wordgamez logic: Letters cannot be used more than they appear
                     word_counts = Counter(word)
                     if all(word_counts[c] <= board_counts[c] for c in word_counts):
                         candidates.append(word)
                 else:
-                    # Agar repeat allowed hai (WordlyGamingBot rule)
+                    # WordlyGaming logic: Letters can be repeated
                     candidates.append(word)
         
         if not candidates: return None
-        # Solve longest available word
         candidates.sort(key=len, reverse=True)
         best = candidates[0]
         client.w_used_words.add(best)
-        return best
+        # 🔥 Word Capitalization (e.g. Menstrua)
+        return best.capitalize()
 
-    # --- SMART LETTER EXTRACTOR (Support Both Bots) ---
+    # --- ROBUST LETTER EXTRACTOR ---
     def extract_letters(text):
         text_up = text.upper()
-        
-        # Mode 1: @WordgamezBot (Look for line with most commas)
-        lines = text_up.splitlines()
-        for line in lines:
-            if line.count(",") >= 4:
-                return "".join(re.findall(r"[A-Z]", line))
-        
-        # Mode 2: @WordlyGamingBot (Look for letters inside brackets or special emojis)
-        # Regex to find letters between ( ) or emojis
+        # Bot 1 (Wordgamez): Commas
+        if "," in text:
+            match = re.search(r"(?:^|\n)\s*([A-Z],\s*)+[A-Z]\s*(?:\n|$)", text_up)
+            if match: return "".join(re.findall(r"[A-Z]", match.group(0)))
+        # Bot 2 (WordlyGaming): Brackets/Emojis
         match = re.search(r"[\(\u2934]\s*([A-Z\s]+)\s*[\)\u2935]", text_up)
-        if match:
-            return "".join(re.findall(r"[A-Z]", match.group(1)))
-            
-        # Fallback: Just get the biggest block of single letters
+        if match: return "".join(re.findall(r"[A-Z]", match.group(1)))
+        # Fallback
         all_caps = re.findall(r"\b[A-Z]\b", text_up)
-        if len(all_caps) >= 5:
-            return "".join(all_caps)
-            
-        return None
+        return "".join(all_caps) if len(all_caps) >= 5 else None
 
     # =========================================
     # CONTROL PANEL (.won, .woff, .wloop, .wdelay, .wstatus)
@@ -112,53 +100,66 @@ def register(client):
         elif text.startswith(".wdelay"):
             try:
                 client.w_delay = float(text.split()[1])
-                await event.edit(f"⚡ **Delay Set to:** {client.w_delay}s")
+                await event.edit(f"⚡ **Delay:** {client.w_delay}s")
             except: pass
         elif text == ".wstatus":
-            await event.edit(f"📊 **Wordly Stats**\nEnabled: `{client.w_enabled}`\nTarget Chat: `{client.w_target_chat}`\nRepeat Allowed: `{client.w_can_repeat}`")
+            await event.edit(f"📊 **Wordly Status**\nEnabled: `{client.w_enabled}`\nLoop: `{client.w_loop}`\nChat: `{client.w_target_chat}`")
 
     # =========================================
-    # TARGET & SOLVE LOGIC
+    # TARGET DETECTION & SOLVING
     # =========================================
     @client.on(events.NewMessage(outgoing=True))
     async def detect_target(event):
         if event.raw_text.lower().startswith("/new"):
             client.w_target_chat = event.chat_id
-            client.w_loop_cmd = event.raw_text
+            client.w_loop_cmd = event.raw_text # Saves /new or /new@botname
             client.w_used_words.clear()
-            await client.send_message("me", f"🎯 **Wordly Locked:** `{event.chat_id}`\nCommand: `{client.w_loop_cmd}`")
+            await client.send_message("me", f"🎯 **Wordly Locked:** `{event.chat_id}`\nMode: `{client.w_loop_cmd}`")
 
     @client.on(events.NewMessage)
     async def game_handler(event):
         if not client.w_enabled or not client.w_target_chat: return
         if event.chat_id != client.w_target_chat: return
-        if event.out: return # Bot should not reply to itself
+        if event.out: return 
 
         msg = event.raw_text
         msg_up = msg.upper()
 
-        # Detection: Is it a game board?
-        is_game = "TOTAL:" in msg_up or "LETTERS BOARD" in msg_up or "REMAINING TIME" in msg_up or "MODE IS LIVE" in msg_up
+        # 🔥 Dynamic Progress Detection (X/20 or X/30)
+        progress_match = re.search(r"(\d+)\s*/\s*(\d+)", msg)
         
-        if is_game:
-            # Rule detection: Can letters repeat?
-            client.w_can_repeat = "LETTERS CAN BE REPEATED" in msg_up
+        if progress_match or "LETTERS BOARD" in msg_up or "MODE IS LIVE" in msg_up:
+            current_found = int(progress_match.group(1)) if progress_match else 0
+            total_goal = int(progress_match.group(2)) if progress_match else 20
             
-            letters = extract_letters(msg)
-            if letters:
-                # If it's a new round (Total 0), reset used words
-                if "TOTAL: 0/" in msg_up or "0/20" in msg_up:
-                    client.w_used_words.clear()
-                
-                client.w_current_letters = letters
-                word = solve(client.w_current_letters)
-                if word:
-                    if client.w_delay > 0: await asyncio.sleep(client.w_delay)
-                    await client.send_message(event.chat_id, word)
-            return
+            # Round Over Check
+            if progress_match and current_found >= total_goal:
+                client.w_current_letters = None
+                if client.w_loop: # Only restarts if specifically turned ON
+                    await asyncio.sleep(5)
+                    await client.send_message(client.w_target_chat, client.w_loop_cmd)
+                return
 
-        # Auto-Restart Round
-        if any(x in msg_up for x in ["GAME OVER", "CONGRATS", "20/20"]):
+            # 🔥 Action: Typing...
+            async with client.action(event.chat_id, 'typing'):
+                # Rule & Letter Extraction
+                client.w_can_repeat = "LETTERS CAN BE REPEATED" in msg_up
+                letters = extract_letters(msg)
+                
+                if letters:
+                    # New round reset
+                    if "TOTAL: 0/" in msg_up or "0/20" in msg_up or "0/30" in msg_up:
+                        client.w_used_words.clear()
+                    
+                    client.w_current_letters = letters
+                    word = solve(client.w_current_letters)
+                    if word:
+                        if client.w_delay > 0: await asyncio.sleep(client.w_delay)
+                        await client.send_message(event.chat_id, word)
+
+        # Fallback for Game Completion
+        elif any(x in msg_up for x in ["GAME OVER", "CONGRATS"]):
+            client.w_current_letters = None
             if client.w_loop:
                 await asyncio.sleep(5)
                 await client.send_message(client.w_target_chat, client.w_loop_cmd)
