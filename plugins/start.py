@@ -253,7 +253,7 @@ async def management_menu(event):
         "• `.tagall <msg>` - Mention everyone in the group.\n"
         "• `.stopall` - Stop the active tag process.\n"
         "• `.tagdelay <sec>` - Set delay (Default 3s).\n"
-        "CHECK /command to view all userbots command."
+        "CHECK /commands to view all userbots command."
     )
     buttons = [
         [Button.inline("👮 Admin Tools", data="mod_admin")],
@@ -281,7 +281,7 @@ async def fun_menu(event):
         "🎭 *𝐀ᴜᴛᴏ-𝐑ᴇᴧᴄᴛɪᴏɴ (Target/GC):* \n"
         "• `.autoreact [emoji]` — Reply to someone OR type openly in GC.\n"
         "• `.stopreact` — Stop auto-reactions in the current chat.\n"
-        "CHECK /command to view all userbots command."
+        "CHECK /commands to view all userbots command."
     )
     buttons = [
         [Button.inline("👤 Identity Clone", data="mod_clone"), Button.inline("💤 AFK Reply", data="mod_afk")],
@@ -323,7 +323,7 @@ async def games_menu(event):
         "• `settime 1 3 onx` — Set Min/Max delay\n"
         "• `status onx` — Check  and status regarding about ban and spam for specific gc\n"
         "• `status` — Check all active games and status regarding about ban and spam\n"
-        "CHECK /command to view all userbots command."
+        "CHECK /commands to view all userbots command."
     )
     
     buttons = [
