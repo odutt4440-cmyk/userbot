@@ -105,25 +105,45 @@ async def logout_handler(event):
 
 # --- 6. TESTING CONTROL (OWNER ONLY) ---
 
-@bot.on(events.NewMessage(pattern=r'(?i)^/testmode (\w+) (on|off)'))
+# Usage: /testmode wordseek off Update is Done!
+@bot.on(events.NewMessage(pattern=r'(?i)^/testmode (\w+) (on|off)(?:\s+(.*))?'))
 async def toggle_test_mode(event):
     if event.sender_id != ADMIN_ID: return
     
     module = event.pattern_match.group(1).lower()
     mode = event.pattern_match.group(2).lower()
+    custom_msg = event.pattern_match.group(3) # Optional Message
     status = (mode == "on")
     
+    from database import set_module_testing, db
     await set_module_testing(module, status)
     
-    # Professional Status Message
-    status_text = "🧪 LOCKED (Internal Testing)" if status else "🌍 PUBLIC (Everyone)"
-    msg = (
-        f"🛡️ **Module Control Update**\n\n"
-        f"📦 **Module:** `{module.upper()}`\n"
-        f"📊 **New Status:** `{status_text}`\n\n"
-        f"Admin bypass is active. Users will be blocked until turned OFF."
-    )
-    await event.reply(msg)
+    # UI Info
+    status_text = "🧪 LOCKED (Internal Testing)" if status else "🌍 PUBLIC (Live)"
+    await event.reply(f"🛡️ **Module Control Update**\n📦 **Module:** `{module.upper()}`\n📊 **Status:** `{status_text}`")
+
+    # 🔥 AUTO-BROADCAST LOGIC (Only when turning OFF)
+    if mode == "off" and custom_msg:
+        status_msg = await event.respond("📢 **Broadcasting update notification to all users...**")
+        done, failed = 0, 0
+        
+        # Database se saare users uthao
+        cursor = db["users"].find({}, {"user_id": 1})
+        broadcast_text = (
+            f"🚀 **New Module Update: {module.upper()}**\n\n"
+            f"📢 `{custom_msg}`\n\n"
+            f"👉 Use /modules to check out the updated feature!"
+        )
+        
+        async for user in cursor:
+            try:
+                await bot.send_message(user["user_id"], broadcast_text)
+                done += 1
+                await asyncio.sleep(0.3) # Rate limit protection
+            except:
+                failed += 1
+        
+        await status_msg.edit(f"✅ **Broadcast Finished!**\n👤 Sent to: `{done}`\n❌ Failed: `{failed}`")
 
 # --- 3. BILLING (APPROVE/CANCEL/TRANSFER) ---
 
