@@ -122,28 +122,30 @@ async def toggle_test_mode(event):
     status_text = "🧪 LOCKED (Internal Testing)" if status else "🌍 PUBLIC (Live)"
     await event.reply(f"🛡️ **Module Control Update**\n📦 **Module:** `{module.upper()}`\n📊 **Status:** `{status_text}`")
 
-    # 🔥 AUTO-BROADCAST LOGIC (Only when turning OFF)
+    
+    # 🔥 AUTO-BROADCAST LOGIC (Fixed for normal text)
     if mode == "off" and custom_msg:
-        status_msg = await event.respond("📢 **Broadcasting update notification to all users...**")
+        status_msg = await event.respond("📢 **Broadcasting update to all users...**")
         done, failed = 0, 0
         
-        # Database se saare users uthao
         cursor = db["users"].find({}, {"user_id": 1})
+        
+        # --- Clean Professional Formatting ---
         broadcast_text = (
             f"🚀 **New Module Update: {module.upper()}**\n\n"
-            f"📢 `{custom_msg}`\n\n"
-            f"👉 Use /modules to check out the updated feature!"
+            f"{custom_msg}\n\n" # 🔥 Backticks hata diye hain
+            f"👉 Use /modules to check it out!"
         )
         
         async for user in cursor:
             try:
-                await bot.send_message(user["user_id"], broadcast_text)
+                await bot.send_message(user["user_id"], broadcast_text, link_preview=False)
                 done += 1
-                await asyncio.sleep(0.3) # Rate limit protection
+                await asyncio.sleep(0.3)
             except:
                 failed += 1
         
-        await status_msg.edit(f"✅ **Broadcast Finished!**\n👤 Sent to: `{done}`\n❌ Failed: `{failed}`")
+        await status_msg.edit(f"✅ **Update Broadcasted!**\n👤 Sent to: `{done}` users.")
 
 # --- 3. BILLING (APPROVE/CANCEL/TRANSFER) ---
 
