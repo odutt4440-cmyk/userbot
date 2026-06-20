@@ -8,7 +8,7 @@ from collections import Counter
 from telethon import events, functions, types
 
 # =========================================
-# LOAD WORDLISTS (Multi-Length Support)
+# LOAD WORDLISTS
 # =========================================
 FOLDER = os.path.dirname(__file__)
 WORDS_DIR = os.path.join(FOLDER, "words")
@@ -18,26 +18,22 @@ def load_json(filename):
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # Support both list and dict formats
             return data["words"] if isinstance(data, dict) else data
     return []
 
-# Starters for different lengths
 STARTERS = {
     3: "The", 4: "Care", 5: "Slate", 6: "Retain", 7: "Staring"
 }
 
-# Mapping length to filenames
 FILE_MAP = {
     3: "three", 4: "four", 5: "five", 6: "six", 7: "seven"
 }
 
 def register(client):
-    # --- Per-User State ---
     client.wd_enabled = True
     client.wd_chat = None
-    client.wd_delay_min = 1.5 
-    client.wd_delay_max = 3.0 
+    client.wd_delay_min = 1.0 
+    client.wd_delay_max = 2.5 
     client.wd_mode = 5
     client.wd_loop = False
     client.wd_loop_cmd = "/new" 
@@ -48,7 +44,6 @@ def register(client):
     client.wd_black = set()
     client.wd_last_guess = None
 
-    # --- HELPERS ---
     def reset_state():
         client.wd_green = {}
         client.wd_yellow = {}
@@ -60,14 +55,15 @@ def register(client):
         return "".join(c.lower() for c in unicodedata.normalize("NFKD", word) if c.isalpha())
 
     def parse_feedback(text):
-        """Extracts the last word and its emoji feedback row"""
         lines = text.splitlines()
         feedback_row = None
         word_row = None
         
         for i, line in enumerate(lines):
-            if any(emoji in line for emoji in ["🟩", "🟨", "🟥"]):
+            if any(emoji in line for emoji in ["🟩", "🟨", "🟥", "⬜", "⬛"]):
+                # Emoji row mil gayi
                 feedback_row = line.strip().split()
+                # Upar wali line me word hota hai
                 if i > 0:
                     word_row = clean_word(lines[i-1].replace(" ", ""))
                 break
@@ -78,23 +74,20 @@ def register(client):
 
     def apply_constraints(guess, feedback):
         confirmed = Counter()
-        # Pass 1: Greens
         for i, state in enumerate(feedback):
             char = guess[i]
             if state == "🟩":
                 client.wd_green[i] = char
                 confirmed[char] += 1
-        # Pass 2: Yellows
         for i, state in enumerate(feedback):
             char = guess[i]
             if state == "🟨":
                 if char not in client.wd_yellow: client.wd_yellow[char] = set()
                 client.wd_yellow[char].add(i)
                 confirmed[char] += 1
-        # Pass 3: Reds
         for i, state in enumerate(feedback):
             char = guess[i]
-            if state == "🟥":
+            if state in ["🟥", "⬜", "⬛"]:
                 if confirmed[char] == 0: client.wd_black.add(char)
 
     def is_valid(word):
@@ -119,38 +112,29 @@ def register(client):
         v_common = [w for w in common if is_valid(w) and w.lower() not in client.wd_used]
         v_all = [w for w in all_words if is_valid(w) and w.lower() not in client.wd_used]
         
-        if not client.wd_used: return STARTERS.get(client.wd_mode, "Slate")
+        # Starter logic
+        if not client.wd_used:
+            return STARTERS.get(client.wd_mode, "Slate")
         
         pool = v_common if v_common else v_all
         if not pool: return None
         
-        # Sort by letter frequency (Smart Guessing)
         freq = Counter("".join(pool))
         pool.sort(key=lambda w: sum(freq[c] for c in set(w.lower())), reverse=True)
         return pool[0].capitalize()
 
-    # =========================================
-    # COMMANDS (Saved Messages Only)
-    # =========================================
+    # --- COMMANDS ---
     @client.on(events.NewMessage(chats='me', pattern=r"(?i)^\.wd (on|off)$"))
     async def toggle_wd(event):
         client.wd_enabled = event.pattern_match.group(1).lower() == "on"
-        await event.edit(f"{'✅' if client.wd_enabled else '❌'} **Wordle Pro Solver {'Enabled' if client.wd_enabled else 'Disabled'}**")
+        await event.edit(f"🧩 **Wordle Pro:** {'ENABLED' if client.wd_enabled else 'DISABLED'}")
 
     @client.on(events.NewMessage(chats='me', pattern=r"(?i)^\.wd loop (on|off)$"))
     async def toggle_loop(event):
         client.wd_loop = event.pattern_match.group(1).lower() == "on"
-        await event.edit(f"{'♻️' if client.wd_loop else '❌'} **Wordle Auto-Loop {'Enabled' if client.wd_loop else 'Disabled'}**")
+        await event.edit(f"♻️ **Auto-Loop:** {'ON' if client.wd_loop else 'OFF'}")
 
-    @client.on(events.NewMessage(chats='me', pattern=r"(?i)^\.wd delay (\d+\.?\d*) (\d+\.?\d*)$"))
-    async def set_delay(event):
-        client.wd_delay_min = float(event.pattern_match.group(1))
-        client.wd_delay_max = float(event.pattern_match.group(2))
-        await event.edit(f"⚡ **Delay set to:** {client.wd_delay_min}s - {client.wd_delay_max}s")
-
-    # =========================================
-    # MAIN ENGINE
-    # =========================================
+    # --- ENGINE ---
     @client.on(events.NewMessage(outgoing=True))
     async def detect_new(event):
         if not client.wd_enabled: return
@@ -158,11 +142,10 @@ def register(client):
         if text.startswith("/new"):
             client.wd_chat = event.chat_id
             client.wd_loop_cmd = text
-            # Auto detect mode from command (e.g., /new7 -> mode 7)
             digit = re.findall(r"\d", text)
             client.wd_mode = int(digit[0]) if digit else 5
             reset_state()
-            await client.send_message("me", f"🎯 **Wordle Pro Locked:** `{event.chat_id}`\nMode: `{client.wd_mode}`\nCommand: `{client.wd_loop_cmd}`")
+            await client.send_message("me", f"🎯 **Wordle Pro Locked:** `{event.chat_id}`\nMode: `{client.wd_mode}`")
 
     @client.on(events.NewMessage)
     async def game_handler(event):
@@ -173,17 +156,22 @@ def register(client):
             return
             
         text = event.raw_text
+        text_l = text.lower()
         
-        # --- GAME END / LOOP ---
+        # --- 1. GAME END DETECTION ---
         if any(x in text for x in ["Congratulations", "Game Over", "Correct word was"]):
             reset_state()
             if client.wd_loop:
-                await asyncio.sleep(random.uniform(5, 8))
+                await asyncio.sleep(random.uniform(5, 7))
                 await client.send_message(client.wd_chat, client.wd_loop_cmd)
             return
 
-        # --- GAME START / FEEDBACK ---
-        if "Guess the" in text or "🟩" in text:
+        # --- 2. SOLVING TRIGGER (Updated with screenshot keywords) ---
+        # "started", "guessing", or emojis
+        is_trigger = any(x in text_l for x in ["started", "guessing", "🟩", "🟨", "🟥", "⬜", "⬛"])
+        
+        if is_trigger:
+            # Parse if turn > 1
             res = parse_feedback(text)
             if res:
                 guess, feedback = res
@@ -191,6 +179,7 @@ def register(client):
                 client.wd_last_guess = guess
                 apply_constraints(guess, feedback)
             
+            # Solve
             next_w = get_next_guess()
             if next_w:
                 client.wd_used.add(next_w.lower())
