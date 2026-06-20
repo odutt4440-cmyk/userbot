@@ -14,7 +14,7 @@ from database import (
 
 # 🔥 MODULE CATEGORY MAP
 CATEGORY_MAP = {
-    "games": ["wordly", "wordseek", "wordchain", "octopus", "wordgrid"],
+    "games": ["wordly", "wordseek", "wordchain", "octopus", "wordle_pro"],
     "fun": ["clone", "afk", "stickers", "reaction", "extra_fun", "raid"],
     "management": ["tagger", "stealth", "group_tools", "info_tools"]
 }
@@ -26,7 +26,7 @@ NAME_MAP = {
     "info": "info_tools",
     "group": "group_tools",
     "admin": "group_tools",
-    "wordgrid": "wordgrid",
+    "wordle_pro": "wordle_pro",
     "management": "management"
 }
 
