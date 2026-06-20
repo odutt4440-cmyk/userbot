@@ -188,11 +188,16 @@ def register(client):
             
         text = event.raw_text
         
-        # 1. End Detection
-        if any(x in text for x in ["Congratulations", "Game Over", "Correct word was"]):
+        # --- 1. GAME END / LOOP LOGIC (Screenshot Optimized) ---
+        # "Congrats" aur "Correct Word" keywords add kiye hain
+        if any(x.lower() in text.lower() for x in ["Congrats", "Game Over", "Correct Word"]):
             reset_state()
+            
             if client.wd_loop:
-                await asyncio.sleep(8)
+                # 🔥 Updated: Ab 3 second baad naya game start karega
+                await asyncio.sleep(3)
+                
+                # Loop command bhejega (e.g. /new5)
                 await client.send_message(client.wd_chat, client.wd_loop_cmd)
             return
 
