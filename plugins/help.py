@@ -111,6 +111,11 @@ async def help_games(event):
         "• `settime 1 3 onx` — Set Min/Max delay\n"
         "• `status onx` — Check  and status regarding about ban and spam for specific gc\n"
         "• `status` — Check all active games and status regarding about ban and spam"
+        "🧩 **𝐖ᴏʀᴅ𝐥𝐞 𝐏ʀ𝐨 (@wordlegameprobot):**\n"
+        "• `.wd on/off` — Toggle Master Solver.\n"
+        "• `.wd loop on/off` — Auto-start rounds.\n"
+        "• `.wd delay 1.0 2.5` — Set Typing Delay.\n"
+        "👉 _Supports 3, 4, 5, 6, 7 letter modes automatically!_"
     )
     await event.edit(text, buttons=[[Button.inline("🔙 Back", data="cmd_back_main")]])
 
