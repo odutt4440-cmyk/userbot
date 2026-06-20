@@ -139,18 +139,43 @@ def register(client):
         client.wd_loop = event.pattern_match.group(1).lower() == "on"
         await safe_edit(event, f"♻️ **Loop Mode: {'ON' if client.wd_loop else 'OFF'}**")
 
-    # --- AUTO LOCK ---
+    
+    @client.on(events.NewMessage(chats='me', pattern=r"(?i)^\.wd delay (\d+\.?\d*) (\d+\.?\d*)$"))
+    async def set_delay(event):
+        try:
+            client.wd_delay_min = float(event.pattern_match.group(1))
+            client.wd_delay_max = float(event.pattern_match.group(2))
+            await safe_edit(event, f"⚡ **Flash Speed Set:** {client.wd_delay_min}s - {client.wd_delay_max}s")
+        except:
+            await safe_edit(event, "❌ **Usage:** `.wd delay 0.1 0.5` (Min Max)")
+
+    # --- AUTO LOCK & COMMAND UPDATER ---
     @client.on(events.NewMessage(outgoing=True))
     async def detect_new(event):
         if not client.wd_enabled: return
-        text = event.raw_text.lower().strip()
-        if text.startswith("/new"):
+        
+        raw_text = event.raw_text.strip()
+        text_lower = raw_text.lower()
+        
+        # Kisi bhi tarah ki /new command ko pakadne ke liye
+        if text_lower.startswith("/new"):
             client.wd_chat = event.chat_id
-            client.wd_loop_cmd = text
-            digit = re.findall(r"\d", text)
+            # 🔥 Exact command save karo (Case sensitive jaisa tumne bheja)
+            client.wd_loop_cmd = raw_text 
+            
+            # Extract Mode (3, 4, 5, 6, 7)
+            digit = re.findall(r"\d", text_lower)
             client.wd_mode = int(digit[0]) if digit else 5
-            reset_state()
-            await client.send_message("me", f"🎯 **Wordle Pro Target:** `{event.chat_id}` (Mode: {client.wd_mode})")
+            
+            reset_state() # Purana data saaf
+            
+            # Notification in Saved Messages
+            await client.send_message("me", (
+                f"🎯 **Wordle Pro: Target Locked**\n"
+                f"📍 **Chat:** `{event.chat_id}`\n"
+                f"📏 **Mode:** `{client.wd_mode} Letters`\n"
+                f"🔄 **Loop Cmd:** `{client.wd_loop_cmd}`"
+            ))
 
     # --- GAME HANDLER ---
     @client.on(events.NewMessage)
