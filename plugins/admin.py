@@ -219,18 +219,33 @@ async def user_info(event):
     await event.reply(f"👤 **Info:** `{user_id}`\n🎁 Trial: `{'Claimed' if claimed else 'Available'}`\n💳 Plan: `{status}`\n⏳ Left: `{time_left}`")
 
 # --- 5. BROADCAST & BACKUP ---
-
-@bot.on(events.NewMessage(pattern=r'/broadcast (.*)'))
+@bot.on(events.NewMessage(pattern=r'(?i)^/broadcast(?:\s+([\s\S]+))?'))
 async def broadcast_handler(event):
     if not await is_staff(event.sender_id): return
+    
+    # 🔥 FIX: [\s\S]+ use kiya hai taaki poora paragraph (newlines ke sath) capture ho
     msg = event.pattern_match.group(1)
-    status_msg = await event.reply("📣 Broadcasting...")
+    
+    if not msg:
+        return await event.reply("❌ **Usage:** `/broadcast Hello everyone\nThis is a new line.`")
+
+    status_msg = await event.reply("📣 **Broadcasting to all users...**")
+    
+    # Database se users ki list uthao
     cursor = db["users"].find({}, {"user_id": 1})
     done, failed = 0, 0
+    
     async for user in cursor:
-        try: await bot.send_message(user["user_id"], msg); done += 1; await asyncio.sleep(0.3)
-        except: failed += 1
-    await status_msg.edit(f"✅ Sent: {done} | ❌ Failed: {failed}")
+        try:
+            # Formatting (Bold, Links, Emojis) as-it-is bhejega
+            await bot.send_message(user["user_id"], msg, link_preview=False)
+            done += 1
+            # Rate limit protection
+            await asyncio.sleep(0.3) 
+        except:
+            failed += 1
+            
+    await status_msg.edit(f"✅ **Broadcast Finished!**\n\n👤 **Sent to:** `{done}` users\n❌ **Failed:** `{failed}`")
 
 @bot.on(events.NewMessage(pattern='/getdb'))
 async def get_db_backup(event):
