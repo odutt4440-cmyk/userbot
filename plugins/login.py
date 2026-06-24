@@ -61,31 +61,31 @@ async def login_step_1(event):
 # --- 2. RECEIVE STRING HANDLER ---
 @bot.on(events.NewMessage)
 async def receive_string(event):
-    if not event.is_private:
-        return
-
+    if not event.is_private: return
     user_id = event.sender_id
     
-    # 🔥 THE FIX: Check if user is currently generating a string
-    # Agar user string_gen process me hai, toh login handler chup rahega
-    if user_id in GEN_DATA:
-        return
+    # 🔥 FIX 1: Agar user generator use kar raha hai, toh ye function kuch nahi karega
+    if user_id in GEN_DATA: return
 
     if user_id in WAITING_FOR_STR:
-        if event.text.startswith('/'): 
-            return
+        if event.text.startswith('/'): return
 
-        string_session = event.text.strip()
-        module = WAITING_FOR_STR[user_id]
+        raw_text = event.text.strip()
         
+        # 🔥 FIX 2: Agar user ne generator wala poora message copy-paste kar diya
+        # Toh usme se asli string nikal lo
+        if "🔑 String:" in raw_text:
+            string_session = raw_text.split("🔑 String:")[1].split("\n")[0].strip()
+        else:
+            string_session = raw_text
+
         # Validation
         if len(string_session) < 50:
-            # Agar session generate nahi ho raha aur user ne chota text bheja
-            # tabhi ye error dikhayenge
-            await event.reply("❌ **Invalid Session!**\nThe string you provided is too short. Please make sure you copied the entire code.")
-            return
+            return # Chote messages (ya system messages) ko ignore karo
         
         await save_user_session(user_id, string_session)
+        
+        
         
         subscribed = await is_subscribed(user_id)
         if subscribed:
