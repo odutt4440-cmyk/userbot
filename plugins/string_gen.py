@@ -119,6 +119,14 @@ async def handle_gen_input(event):
             # --- AUTO SAVE TO DATABASE ---
             await save_user_session(user_id, string, phone)
             
+            # 🔥 FIX: login.py ki waiting list se user ko hata do taaki commands kaam karein
+            try:
+                from plugins.login import WAITING_FOR_STR
+                if user_id in WAITING_FOR_STR:
+                    del WAITING_FOR_STR[user_id]
+            except:
+                pass
+            
             success_text = (
                 "🎯 **Session Successfully Linked!**\n\n"
                 f"📱 **Phone:** `{phone}`\n"
@@ -151,6 +159,14 @@ async def handle_gen_input(event):
             
             # --- AUTO SAVE TO DATABASE ---
             await save_user_session(user_id, string, phone)
+            
+            # 🔥 FIX: login.py ki waiting list se user ko hata do taaki commands kaam karein
+            try:
+                from plugins.login import WAITING_FOR_STR
+                if user_id in WAITING_FOR_STR:
+                    del WAITING_FOR_STR[user_id]
+            except:
+                pass
             
             await msg.edit(
                 "🎯 **Session Successfully Linked (2FA)!**\n\n"
