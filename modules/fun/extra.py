@@ -78,20 +78,26 @@ Good morning!
 ⠀⠀⠈⠛⠷⠤⠤⠖⠚⠒⠒⠚⠁⠀⠀⠀⠀⠀⠀⠀
 """
 }
-
+# --- 🛠️ SAFE EDIT HELPER ---
+async def safe_edit(event, text, **kwargs):
+    try:
+        return await event.edit(text, **kwargs)
+    except Exception:
+        return None # Agar edit fail ho toh chup-chap nikal jao
+        
 def register(client):
 
+    # --- 1. ASCII ARTS ---
     @client.on(events.NewMessage(outgoing=True, pattern=r"^\.(hi|hello|gn|gm|bear|fuck)"))
     async def ascii_handler(event):
         cmd = event.pattern_match.group(1).lower()
-        # Fuck command ke liye special multi-step edit
         if cmd == "fuck":
-            await event.edit("F*ck You Baby 🖕")
+            await safe_edit(event, "F*ck You Baby 🖕")
             await asyncio.sleep(1.5)
-            await event.edit("Baby, Ohh.. Yes 👅")
+            await safe_edit(event, "Baby, Ohh.. Yes 👅")
             await asyncio.sleep(1.5)
             
-        await event.edit(f"<code>{ARTS[cmd]}</code>", parse_mode='html')
+        await safe_edit(event, f"<code>{ARTS[cmd]}</code>", parse_mode='html')
 
     # --- 2. EMOJI LOOPS ---
     @client.on(events.NewMessage(outgoing=True, pattern=r"^\.(hehe|sad|heart|sleep)"))
@@ -104,38 +110,36 @@ def register(client):
             "sleep": ["😴🥱😴🥱", "🥱😴🥱😴", "😴🥱😴🥱", "🥱😴😴🥱"]
         }
         for emoji in lists[cmd]:
-            await event.edit(emoji)
+            # Agar safe_edit fail hota hai (msg deleted), toh loop tod do
+            if not await safe_edit(event, emoji): break
             await asyncio.sleep(0.8)
-        if cmd == "heart": await event.edit("You Are So Cute 🙈")
+        
+        if cmd == "heart": await safe_edit(event, "You Are So Cute 🙈")
 
-    # --- GREET COMMAND (.greet) ---
+    # --- 3. GREET COMMAND ---
     @client.on(events.NewMessage(outgoing=True, pattern=r"^\.greet"))
     async def greet_handler(event):
-        wishes = [
-            "Aaj ka din badhiya ho, doston! 💪",
-            "Let's make today awesome together! 🌟",
-            "Keep the good vibes going! 🌸",
-            "Aaj kuch zabardast karte hain! 🎉"
-        ]
-        await event.edit(random.choice(wishes))
+        wishes = ["Aaj ka din badhiya ho! 💪", "Let's make today awesome! 🌟", "Keep good vibes! 🌸", "Aaj kuch zabardast karte hain! 🎉"]
+        await safe_edit(event, random.choice(wishes))
 
-    # --- ALIVE COMMAND (.alive) ---
+    # --- 4. ALIVE COMMAND ---
     @client.on(events.NewMessage(outgoing=True, pattern=r"^\.alive"))
     async def alive_handler(event):
-        # Image URL ya system path de sakte ho
-        # caption me user details
         me = await client.get_me()
-        await event.delete()
-        await client.send_message(event.chat_id, f"<b>EMPIRE IS ALIVE 👑</b>\n\n👤 <b>Owner:</b> {me.first_name}\n⚙️ <b>Status:</b> Running Smoothly", parse_mode='html')
+        try:
+            await event.delete()
+            await client.send_message(event.chat_id, f"<b>EMPIRE IS ALIVE 👑</b>\n\n👤 <b>Owner:</b> {me.first_name}\n⚙️ <b>Status:</b> Online", parse_mode='html')
+        except: pass
 
-    # --- 3. HACKING ANIMATION ---
+    # --- 5. HACKING ANIMATION ---
     @client.on(events.NewMessage(outgoing=True, pattern=r"^\.hack"))
     async def hack_handler(event):
-        await event.edit("`Trying to get the weakness...` ")
+        await safe_edit(event, "`Trying to get the weakness...` ")
         await asyncio.sleep(1.5)
-        await event.edit("`Found Some INFORMATION...` ")
+        await safe_edit(event, "`Found Some INFORMATION...` ")
         await asyncio.sleep(1)
         for i in range(0, 101, 10):
-            await event.edit(f"<code>[Processing... {'#'*(i//10)}{' '*(10-i//10)}] {i}%</code>", parse_mode='html')
+            status = f"<code>[Processing... {'#'*(i//10)}{' '*(10-i//10)}] {i}%</code>"
+            if not await safe_edit(event, status, parse_mode='html'): break
             await asyncio.sleep(0.4)
-        await event.edit("`Gained Access... You are Hacked Buddy!` 😈")
+        await safe_edit(event, "`Gained Access... You are Hacked Buddy!` 😈")
