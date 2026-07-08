@@ -1,343 +1,176 @@
 import asyncio
 import logging
-import re
 from telethon import events, types, functions
 from telethon.errors import FloodWaitError, HideRequesterMissingError
-from telethon.tl.functions.messages import HideChatJoinRequestRequest
-from telethon.tl.types import (
-    TypeInputPeer, InputPeerChannel, InputPeerChat
-)
 from database import set_approve_settings, get_approve_settings
 
 log = logging.getLogger(__name__)
 
 def register(client):
 
-    # ============================================================
-    # 1. APPROVE ALL - ID-BASED BATCH APPROVAL
-    # ============================================================
+    # --- 1. APPROVE ALL PENDING (.approveall) - AUTO-RETRY VERSION ✅ ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.approveall'))
     async def approve_all_handler(event):
         if event.is_private:
             return await event.edit("❌ **Error:** Please run this command INSIDE the group.")
 
-        msg = await event.edit("🔄 **Starting batch approval...**")
+        msg = await event.edit("🔄 **Approving all pending join requests...**")
         chat_id = event.chat_id
 
         try:
             chat = await client.get_entity(chat_id)
             
-            # STEP 1: Get admin log to find recent join request user IDs
-            await msg.edit("🔄 **Scanning recent join requests from admin log...**")
+            batch_count = 0
+            total_approved = 0
+            consecutive_fails = 0
+            max_consecutive_fails = 3  # 3 baar fail hua to stop
+            max_batches = 100  # Safety cap
             
-            from telethon.tl.functions.channels import GetAdminLogRequest
-            from telethon.tl.types import InputChannel, ChannelAdminLogEventsFilter
-            
-            # Get chat as InputChannel
-            input_channel = None
-            if hasattr(chat, 'id'):
-                access_hash = getattr(chat, 'access_hash', 0)
-                input_channel = InputChannel(chat.id, access_hash)
-            
-            if not input_channel:
-                # Try getting via entity
-                return await msg.edit("❌ **Couldn't get channel input. Try in a supergroup/channel.**")
-            
-            # Fetch recent admin log entries to find join requests
-            # Admin log mein "join requests" ka koi direct filter nahi, 
-            # lekin hum participants change events dekh sakte hain
-            
-            pending_ids = []
-            
-            # TRY METHOD 1: Get participants with "request" filter (Telethon 1.44 specific)
-            try:
-                from telethon.tl.types import ChannelParticipantsSearch
-                
-                # Supergroup/channel participants search with empty query to get all members
-                # Pending request users WON'T appear here, but we can try the admins list
-                from telethon.tl.functions.channels import GetParticipantsRequest
-                from telethon.tl.types import ChannelParticipantsAdmins, ChannelParticipantsBots
-                
-                # This won't show pending users directly, skip
-                pass
-            except:
-                pass
-            
-            # METHOD 2: Try brute-force with a range of sequential user IDs
-            # Telegram groups mein recent join requests usually recent IDs hoti hain
-            # But this is impractical for 1397 users
-            
-            # ✅ FINAL METHOD: Let's create a temporary bot API bridge
-            # Actually, we'll use a smart approach: 
-            # Fetch recent messages to find "joined via invite" system messages
-            
-            await msg.edit("🔄 **Method: Sequential approve via smart ID collection...**")
-            
-            # Get chat's recent join dates via participants
-            # Everyone who is ALREADY a member is not pending
-            # So we need pending IDs. Here's what works:
-            
-            # Check if we can use the GetChatJoinRequests TL method 
-            # by importing it from a newer layer
-            try:
-                # Direct layer method - some Telethon 1.44 builds have it
-                from telethon.tl.functions.messages import GetChatJoinRequestsRequest as GetReq
-                has_get_requests = True
-            except ImportError:
-                has_get_requests = False
-            
-            if has_get_requests:
+            while consecutive_fails < max_consecutive_fails and batch_count < max_batches:
                 try:
-                    await msg.edit("🔄 **Fetching pending requests (layer method found)...**")
-                    offset = None
-                    all_requests = []
-                    
-                    while True:
-                        try:
-                            if offset:
-                                result = await client(GetReq(
-                                    peer=chat,
-                                    limit=100,
-                                    offset_date=offset.date if hasattr(offset, 'date') else None,
-                                    offset_user=offset.user_id if hasattr(offset, 'user_id') else None
-                                ))
-                            else:
-                                result = await client(GetReq(
-                                    peer=chat,
-                                    limit=100
-                                ))
-                        except Exception as e:
-                            if "not found" in str(e).lower():
-                                break
-                            raise
-                        
-                        if not result or not hasattr(result, 'requests') or not result.requests:
-                            break
-                        
-                        for req in result.requests:
-                            user_id = getattr(req, 'user_id', None)
-                            if user_id:
-                                all_requests.append(user_id)
-                        
-                        if len(result.requests) < 100:
-                            break
-                        
-                        offset = result.requests[-1]
-                        await asyncio.sleep(0.5)
-                    
-                    pending_ids = all_requests
-                    
-                except Exception as e:
-                    log.warning(f"Layer method failed: {e}")
-                    pending_ids = []
-            
-            # If layer method didn't work or returned nothing
-            if not pending_ids:
-                # METHOD 3: Let user provide IDs via text file/scraping
-                # But for now, show error with instructions
-                return await msg.edit(
-                    "❌ **Cannot fetch pending IDs automatically in Telethon 1.44.**\n\n"
-                    "🔧 **Solution:** I'll approve them ONE BY ONE using admin log IDs.\n"
-                    "Use this alternative command:\n\n"
-                    "```\n"
-                    ".scanapprove\n"
-                    "```\n"
-                    "This will scan admin log and approve recent joiners."
-                )
-            
-            # If we got IDs, process them
-            total = len(pending_ids)
-            await msg.edit(f"🔄 **Found `{total}` pending requests. Approving...**")
-            
-            success = 0
-            failed = 0
-            
-            for i, uid in enumerate(pending_ids, 1):
-                try:
-                    user = await client.get_entity(uid)
-                    await client(HideChatJoinRequestRequest(
+                    # Call HideAll - har baar ~200 requests approve hoti hain
+                    await client(functions.messages.HideAllChatJoinRequestsRequest(
                         peer=chat,
-                        user_id=user,
                         approved=True
                     ))
-                    success += 1
                     
-                    if i % 10 == 0:
-                        await msg.edit(f"⏳ **Progress:** `{i}/{total}` (✅{success} ❌{failed})")
+                    batch_count += 1
+                    total_approved += 200  # Approx count
+                    consecutive_fails = 0  # Reset fail counter on success
                     
-                    await asyncio.sleep(0.3)  # Rate limit safe
+                    await msg.edit(
+                        f"✅ **Batch {batch_count} done**\n"
+                        f"📊 Total approved: ~`{total_approved}`\n"
+                        f"⏳ Next batch in 30 seconds..."
+                    )
+                    
+                    # ⚡ IMPORTANT: 30 second delay between batches
+                    # Yeh Telegram ko reset time dega
+                    await asyncio.sleep(30)
                     
                 except HideRequesterMissingError:
-                    success += 1  # Already approved
-                    await asyncio.sleep(0.1)
+                    # ✅ Koi pending nahi bacha - done!
+                    await msg.edit(
+                        f"✅ **All done!**\n"
+                        f"📊 Total batches: `{batch_count}`\n"
+                        f"👥 Total approved: ~`{total_approved}`\n"
+                        f"📭 No more pending requests."
+                    )
+                    return
+                    
+                except TimeoutError:
+                    consecutive_fails += 1
+                    log.warning(f"⏱️ Timeout #{consecutive_fails}, waiting 60s...")
+                    await msg.edit(
+                        f"⏱️ **Timeout #{consecutive_fails}**\n"
+                        f"⏳ Waiting 60 seconds before retry..."
+                    )
+                    await asyncio.sleep(60)
+                    continue
+                    
                 except FloodWaitError as f:
-                    await msg.edit(f"⚠️ **Rate limited.** Sleeping `{f.seconds}`s...")
-                    await asyncio.sleep(f.seconds)
-                except Exception:
-                    failed += 1
-                    await asyncio.sleep(0.2)
+                    wait_time = f.seconds
+                    log.warning(f"🌊 Flood wait: {wait_time}s")
+                    await msg.edit(f"🌊 **Rate limited.** Sleeping `{wait_time}`s...")
+                    await asyncio.sleep(wait_time)
+                    consecutive_fails = 0  # FloodWait normal hai, fail count reset
+                    continue
+                    
+                except Exception as api_err:
+                    error_str = repr(api_err)
+                    log.error(f"Batch error: {error_str}")
+                    
+                    # Check if it's "unsuccessful" error (Telethon internal)
+                    if "unsuccessful" in error_str.lower() or "timeout" in error_str.lower():
+                        consecutive_fails += 1
+                        wait = 30 * consecutive_fails  # 30, 60, 90 sec
+                        await msg.edit(
+                            f"⚠️ **Error in batch {batch_count+1}**\n"
+                            f"⏳ Waiting `{wait}`s before retry..."
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+                    else:
+                        # Unknown error - report it
+                        return await msg.edit(f"❌ **Fatal Error:** `{error_str}`")
             
-            await msg.edit(
-                f"✅ **Approval complete!**\n"
-                f"• Total: `{total}`\n"
-                f"• Approved: `{success}`\n"
-                f"• Failed: `{failed}`"
-            )
+            # Loop ended - report summary
+            if batch_count > 0:
+                await msg.edit(
+                    f"✅ **Process completed!**\n"
+                    f"📊 Total batches: `{batch_count}`\n"
+                    f"👥 Total approved: ~`{total_approved}`\n\n"
+                    f"💡 Agar aur pending hain to 2 minute baad `.approveall` phir se chalao."
+                )
+            else:
+                await msg.edit("❌ **Could not process any batches.** Telegram might be limiting.")
             
         except Exception as e:
-            await msg.edit(f"❌ **Fatal Error:** `{repr(e)}`")
+            error_details = repr(e)
+            log.error(f"ApproveAll Fatal Error: {error_details}")
+            await event.edit(f"❌ **Fatal Error:** `{error_details}`")
 
-    # ============================================================
-    # 2. SCAN & APPROVE FROM ADMIN LOG (.scanapprove)
-    # ============================================================
-    @client.on(events.NewMessage(outgoing=True, pattern=r'^\.scanapprove'))
-    async def scan_approve_handler(event):
-        """Scan admin log and approve any pending join requests found"""
+    # --- 2. APPROVE BY ID ---
+    @client.on(events.NewMessage(outgoing=True, pattern=r'^\.approve (\d+)'))
+    async def approve_by_id_handler(event):
         if event.is_private:
-            return await event.edit("❌ Please run this in a group.")
-        
-        msg = await event.edit("🔄 **Scanning admin log for join requests...**")
-        chat = await client.get_entity(event.chat_id)
-        
+            return await event.edit("❌ **Error:** Please run this command INSIDE the group.")
+
+        user_id = int(event.pattern_match.group(1))
+        chat_id = event.chat_id
+
         try:
-            from telethon.tl.functions.channels import GetAdminLogRequest
-            from telethon.tl.types import InputChannel
+            chat = await client.get_entity(chat_id)
+            user = await client.get_entity(user_id)
             
-            # Get InputChannel
-            access_hash = getattr(chat, 'access_hash', 0)
-            input_channel = InputChannel(chat.id, access_hash)
-            
-            # Fetch admin log (recent events)
-            # We look for "joined" events
-            result = await client(GetAdminLogRequest(
-                channel=input_channel,
-                q='',
-                max_id=0,
-                min_id=0,
-                limit=100,
-                events_filter=None,
-                admins=None
+            await client(functions.messages.HideChatJoinRequestRequest(
+                peer=chat,
+                user_id=user,
+                approved=True
             ))
             
-            joined_users = []
-            for entry in result.events:
-                # Check if it's a join event
-                action = getattr(entry, 'action', None)
-                if action and 'join' in type(action).__name__.lower():
-                    user = getattr(entry, 'user_id', None)
-                    if user:
-                        joined_users.append(user)
-            
-            if not joined_users:
-                return await msg.edit("📭 **No recent join activity found in admin log.**")
-            
-            # Now try to approve each
-            await msg.edit(f"🔄 **Found `{len(joined_users)}` recent joins. Checking for pending requests...**")
-            
-            approved = 0
-            for uid in joined_users[:50]:  # Max 50 to avoid rate limits
-                try:
-                    await client(HideChatJoinRequestRequest(
-                        peer=chat,
-                        user_id=uid,
-                        approved=True
-                    ))
-                    approved += 1
-                    await asyncio.sleep(0.5)
-                except HideRequesterMissingError:
-                    # Already approved or not pending
-                    pass
-                except FloodWaitError as f:
-                    await asyncio.sleep(f.seconds)
-                except:
-                    pass
-            
-            if approved > 0:
-                await msg.edit(f"✅ **Approved `{approved}` from admin log.**\nRun again for more.")
-            else:
-                await msg.edit("📭 **No pending requests found in recent admin log.**")
-            
+            await event.edit(f"✅ **Approved user:** `{user_id}`")
         except Exception as e:
-            await msg.edit(f"❌ **Error:** `{repr(e)}`")
+            await event.edit(f"❌ **Error:** `{repr(e)}`")
 
-    # ============================================================
-    # 3. BATCH APPROVE FROM LIST (.approvelist)
-    # ============================================================
-    @client.on(events.NewMessage(outgoing=True, pattern=r'^\.approvelist (.+)'))
-    async def approve_list_handler(event):
-        """Usage: .approvelist 123 456 789 (space-separated IDs)"""
-        ids_str = event.pattern_match.group(1).strip()
-        ids = re.findall(r'\d+', ids_str)
-        
-        if not ids:
-            return await event.edit("❌ **No valid IDs found.** Usage: `.approvelist 123 456 789`")
-        
-        msg = await event.edit(f"🔄 **Approving `{len(ids)}` users...**")
-        chat = await client.get_entity(event.chat_id)
-        
-        success, failed = 0, 0
-        for i, uid_str in enumerate(ids, 1):
-            try:
-                uid = int(uid_str)
-                user = await client.get_entity(uid)
-                await client(HideChatJoinRequestRequest(
-                    peer=chat,
-                    user_id=user,
-                    approved=True
-                ))
-                success += 1
-                
-                if i % 5 == 0:
-                    await msg.edit(f"⏳ **Progress:** `{i}/{len(ids)}` (✅{success} ❌{failed})")
-                
-                await asyncio.sleep(0.5)
-            except:
-                failed += 1
-                await asyncio.sleep(0.2)
-        
-        await msg.edit(f"✅ **Done!** Approved: `{success}`, Failed: `{failed}`")
-
-    # ============================================================
-    # 4. AUTO-APPROVE TOGGLE
-    # ============================================================
+    # --- 3. TOGGLE AUTO-APPROVE ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.autoapprove (on|off)'))
     async def toggle_auto(event):
         mode = event.pattern_match.group(1).lower()
         is_on = (mode == "on")
         await set_approve_settings(event.sender_id, is_on)
         status = "ENABLED ✅" if is_on else "DISABLED 🛑"
-        await event.edit(f"🛡️ **Auto-approve is now {status}**")
+        await event.edit(f"🛡️ **Join Guard:** Auto-approve is now **{status}**.")
 
-    # ============================================================
-    # 5. RAW HANDLER - AUTO-APPROVE NEW REQUESTS
-    # ============================================================
+    # --- 4. RAW HANDLER FOR NEW REQUESTS ---
     @client.on(events.Raw())
     async def raw_handler(update):
-        try:
-            update_name = type(update).__name__
-            
-            if update_name == "UpdateBotChatInviteRequester":
+        update_name = type(update).__name__
+        
+        if "PendingJoinRequests" in update_name or "ChatInviteRequester" in update_name:
+            try:
                 me = await client.get_me()
-                settings = await get_approve_settings(me.id)
-                
-                auto_enabled = False
-                if isinstance(settings, bool):
-                    auto_enabled = settings
-                elif isinstance(settings, dict):
-                    auto_enabled = settings.get('enabled', False)
-                
-                if not auto_enabled or not hasattr(update, 'user_id'):
-                    return
-                
-                try:
-                    await client(HideChatJoinRequestRequest(
-                        peer=update.peer,
-                        user_id=update.user_id,
-                        approved=True
-                    ))
-                    log.info(f"✅ Auto-approved user {update.user_id}")
-                except:
-                    pass
+                if await get_approve_settings(me.id):
+                    if hasattr(update, 'user_id') and update.user_id:
+                        user_id = update.user_id
+                        try:
+                            user = await client.get_entity(user_id) if isinstance(user_id, int) else user_id
+                        except:
+                            user = user_id
+                        
+                        await client(functions.messages.HideChatJoinRequestRequest(
+                            peer=update.peer,
+                            user_id=user,
+                            approved=True
+                        ))
+                        log.info(f"✅ Auto-approved user: {update.user_id}")
                     
-        except Exception as e:
-            log.error(f"Raw handler: {e}")
+                    elif hasattr(update, 'peer') and update.peer:
+                        await client(functions.messages.HideAllChatJoinRequestsRequest(
+                            peer=update.peer,
+                            approved=True
+                        ))
+                        log.info(f"✅ Auto-approved all pending for chat: {update.peer}")
+                        
+            except Exception as e:
+                log.error(f"Auto-approve error: {repr(e)}")
