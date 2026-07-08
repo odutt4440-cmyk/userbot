@@ -44,10 +44,11 @@ async def help_manage(event):
         "**🕵️ Stealth Monitor (New):**\n"
         "• `.snatcher on/off` — Auto-save view-once media.\n"
         "• `.antidelete on/off` — Log deleted messages in Saved Msg.\n\n"
-        "✅ **𝐉ᴏɪɴ 𝐀ᴘᴘʀᴏᴠᴇʀ:**\n"
-        "• `.approveall` — Accept all existing pending requests.\n"
-        "• `.autoapprove on/off` — Automatically accept new requests.\n"
-        "👉 _Note: Userbot must be Admin with 'Add Members' rights._"
+        "✅ **𝐉ᴏɪɴ 𝐀𝐩𝐩ʀᴏᴠᴇʀ (New):**\n"
+        "• `.approveall` — Fast batch approval (200 users/batch).\n"
+        "• `.approveallx` — Continuous auto-mode (Full cleanup).\n"
+        "• `.autoapprove on/off` — Real-time auto-accept for new members.\n"
+        "• `.approve [ID]` — Approve a specific user by their ID."
     )
     await event.edit(text, buttons=[[Button.inline("🔙 Back", data="cmd_back_main")]])
 
