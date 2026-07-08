@@ -286,7 +286,8 @@ async def fun_menu(event):
     buttons = [
         [Button.inline("👤 Identity Clone", data="mod_clone"), Button.inline("💤 AFK Reply", data="mod_afk")],
         [Button.inline("🖼️ Stickers & Meme", data="mod_stickers"), Button.inline("🎭 Auto-React", data="mod_reaction")],
-        [Button.inline("⚔️ Raid Suite", data="mod_raid"), Button.inline("✨ Extra Fun", data="mod_extra_fun")], # 🔥 Naye Buttons
+        [Button.inline("⚔️ Raid Suite", data="mod_raid"), Button.inline("✨ Extra Fun", data="mod_extra_fun")],
+        [Button.inline("🤖 Auto-Greeting", data="mod_auto_greet")],
         [Button.inline("🔙 𝐁ᴧᴄᴋ", data="modules_main")]
     ]
     await event.edit(text, buttons=buttons)
