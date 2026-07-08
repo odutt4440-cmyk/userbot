@@ -15,7 +15,7 @@ from database import (
 # 🔥 MODULE CATEGORY MAP
 CATEGORY_MAP = {
     "games": ["wordly", "wordseek", "wordchain", "octopus", "wordle_pro"],
-    "fun": ["clone", "afk", "stickers", "reaction", "extra_fun", "raid"],
+    "fun": ["clone", "afk", "stickers", "reaction", "extra_fun", "raid", "auto_greet"],
     "management": ["tagger", "stealth", "group_tools", "info_tools"]
 }
 
@@ -28,6 +28,7 @@ NAME_MAP = {
     "admin": "group_tools",
     "wordle_pro": "wordle_pro",
     "management": "management"
+    "auto_greet": "auto_greet"
 }
 
 def get_clean_name(data_bytes):
