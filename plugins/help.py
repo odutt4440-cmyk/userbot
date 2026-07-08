@@ -77,7 +77,12 @@ async def help_fun(event):
         "• `.replyraid` (Reply) — Auto-insult reply engine.\n"
         "• `.delayraid [delay] [count] [target]` — Safe raid.\n"
         "• `.stop` — Kill raids. | `.clear` — Delete 100 msgs.\n"
-        "• `.photo` — Download all profile photos of a user."
+        "• `.photo` — Download all profile photos of a user.\n\n"
+        "🤖 **𝐀ᴜᴛᴏ-𝐆ʀᴇᴇᴛɪɴɢ (Promoter):**\n"
+        "• `.agon` — Enable periodic messaging.\n"
+        "• `.agoff` — Disable the promoter.\n"
+        "• `.agset [Msg1 | Msg2]` — Set custom messages (Use | to split).\n"
+        "• `.agtime [Min]` — Set interval (Min: 10m)."
     )
     await event.edit(text, buttons=[[Button.inline("🔙 Back", data="cmd_back_main")]])
 
