@@ -491,6 +491,21 @@ async def get_ag_settings(user_id):
     }
     return res if res else default
 
+# --- 12. JOIN APPROVER SETTINGS ---
+
+async def set_approve_settings(user_id, status):
+    """Saves Auto-Approve status (ON/OFF) for a user."""
+    if settings_db is not None:
+        await db["approve_settings"].update_one(
+            {"user_id": user_id}, {"$set": {"auto_approve": 1 if status else 0}}, upsert=True
+        )
+
+async def get_approve_settings(user_id):
+    """Checks if Auto-Approve is enabled for a user."""
+    if settings_db is None: return False
+    res = await db["approve_settings"].find_one({"user_id": user_id})
+    return res.get("auto_approve", 0) == 1 if res else False
+
 # --- 7. PROXY OBJECTS FOR ADMIN COMMANDS ---
 class CollectionProxy:
     def __init__(self, table_name):
