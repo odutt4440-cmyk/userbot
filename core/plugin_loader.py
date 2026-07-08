@@ -23,7 +23,7 @@ MODULE_MAP = {
     # Management Category
     "tagger": "modules.management.tagger",
     "stealth": "modules.management.stealth",
-    # Essentials (Hamesha load honge)
+    "approver": "modules.management.approver",
     "info_tools": "modules.management.info_tools",
     "group_tools": "modules.management.group_tools"
 }
