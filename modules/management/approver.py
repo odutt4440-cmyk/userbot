@@ -2,6 +2,7 @@ import asyncio
 import logging
 from telethon import events, types, functions
 from telethon.tl.functions.messages import GetChatJoinRequestsRequest, HideChatJoinRequestRequest
+from telethon.errors import FloodWaitError
 from database import set_approve_settings, get_approve_settings
 
 log = logging.getLogger(__name__)
@@ -12,68 +13,72 @@ def register(client):
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.approveall'))
     async def approve_all_handler(event):
         chat_id = event.chat_id
-        await event.edit("🔍 **Scanning for pending join requests...**")
+        await event.edit("🔄 **Initializing Join Request Engine...**")
         
-        count = 0
         try:
+            # 1. Resolve the chat entity properly
+            chat = await client.get_input_entity(chat_id)
+            
+            total_approved = 0
             while True:
-                # Fetch batch of 100 requests
-                requests = await client(GetChatJoinRequestsRequest(
-                    peer=chat_id,
+                # 2. Fetch Join Requests (Batch of 100)
+                # Offset use kar rahe hain taaki pagination sahi chale
+                res = await client(GetChatJoinRequestsRequest(
+                    peer=chat,
                     limit=100
                 ))
                 
-                if not requests.requests:
+                if not res.requests:
                     break
                 
-                for req in requests.requests:
+                await event.edit(f"⏳ **Approving batch...** (Current: `{total_approved}`)")
+                
+                for req in res.requests:
                     try:
+                        # 3. Approve the User
                         await client(HideChatJoinRequestRequest(
-                            peer=chat_id,
+                            peer=chat,
                             user_id=req.user_id,
-                            approved=True # True means ACCEPT
+                            approved=True
                         ))
-                        count += 1
-                        # Anti-Flood Wait: Small gap every 5 approvals
-                        if count % 5 == 0:
-                            await asyncio.sleep(1.5)
+                        total_approved += 1
+                        # Fast processing but safe
+                        await asyncio.sleep(0.4) 
+                        
+                    except FloodWaitError as f:
+                        await event.respond(f"⚠️ **FloodWait:** Sleeping for {f.seconds}s...")
+                        await asyncio.sleep(f.seconds)
                     except Exception as e:
-                        log.error(f"Approval failed for {req.user_id}: {e}")
+                        log.error(f"Approval error: {e}")
                         continue
                 
-                # Big gap between batches
-                await asyncio.sleep(3)
+                # Chota gap batches ke beech me
+                await asyncio.sleep(2)
 
-            await event.respond(f"✅ **Task Finished!**\nSuccessfully approved `{count}` members in this chat.")
+            await event.respond(f"✅ **Mission Successful!**\nApproved `{total_approved}` members in this chat.")
+            
         except Exception as e:
-            await event.edit(f"❌ **Error:** `{str(e)}` \nEnsure I have 'Add Members' admin rights.")
+            await event.edit(f"❌ **Failed:** `{str(e)}` \n\n**Reasons:**\n1. I might not be Admin.\n2. This chat doesn't have 'Join Requests' enabled.\n3. Telethon Peer Mismatch.")
 
-    # --- 2. TOGGLE AUTO-APPROVE (.autoapprove on/off) ---
+    # --- 2. TOGGLE AUTO-APPROVE ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.autoapprove (on|off)'))
     async def toggle_auto(event):
         mode = event.pattern_match.group(1).lower()
-        user_id = event.sender_id
         is_on = (mode == "on")
-        
-        await set_approve_settings(user_id, is_on)
+        await set_approve_settings(event.sender_id, is_on)
         status = "ENABLED ✅" if is_on else "DISABLED 🛑"
-        await event.edit(f"🛡️ **Join Guard:** Auto-approve for new members is now **{status}**.")
+        await event.edit(f"🛡️ **Auto-Approve status:** {status}")
 
-    # --- 3. BACKGROUND LISTENER (Real-time) ---
+    # --- 3. REAL-TIME AUTO APPROVER ---
     @client.on(events.Raw(types.UpdateBotChatJoinRequest))
     async def handler(update):
-        # Manager se status check karo (Iske liye client.me.id use hota hai)
-        me = await client.get_me()
-        is_enabled = await get_approve_settings(me.id)
-        
-        if not is_enabled:
-            return
-
         try:
-            await client(HideChatJoinRequestRequest(
-                peer=update.peer,
-                user_id=update.user_id,
-                approved=True
-            ))
+            me = await client.get_me()
+            if await get_approve_settings(me.id):
+                await client(HideChatJoinRequestRequest(
+                    peer=update.peer,
+                    user_id=update.user_id,
+                    approved=True
+                ))
         except:
             pass
