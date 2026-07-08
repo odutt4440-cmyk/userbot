@@ -16,7 +16,7 @@ from database import (
 CATEGORY_MAP = {
     "games": ["wordly", "wordseek", "wordchain", "octopus", "wordle_pro"],
     "fun": ["clone", "afk", "stickers", "reaction", "extra_fun", "raid", "auto_greet"],
-    "management": ["tagger", "stealth", "group_tools", "info_tools"]
+    "management": ["tagger", "stealth", "group_tools", "info_tools", "approver"]
 }
 
 # KEY MAPPING: Buttons se Backend Sync
@@ -27,8 +27,9 @@ NAME_MAP = {
     "group": "group_tools",
     "admin": "group_tools",
     "wordle_pro": "wordle_pro",
-    "management": "management"
-    "auto_greet": "auto_greet"
+    "management": "management",
+    "auto_greet": "auto_greet",
+    "approver": "approver"
 }
 
 def get_clean_name(data_bytes):
