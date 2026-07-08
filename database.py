@@ -466,6 +466,31 @@ async def is_module_in_testing(module_name):
     res = await get_setting(f"TESTMODE_{module_name.upper()}")
     return res == "on"
 
+# --- 11. AUTO-GREET SETTINGS ---
+
+async def set_ag_settings(user_id, status=None, messages=None, interval=None):
+    """Saves Auto-Greet configuration for a specific user."""
+    update_data = {}
+    if status is not None: update_data["active"] = 1 if status else 0
+    if messages is not None: update_data["messages"] = messages
+    if interval is not None: update_data["interval"] = int(interval)
+    
+    if settings_db is not None:
+        await db["auto_greet_settings"].update_one(
+            {"user_id": user_id}, {"$set": update_data}, upsert=True
+        )
+
+async def get_ag_settings(user_id):
+    """Retrieves Auto-Greet settings with professional defaults."""
+    if settings_db is None: return None
+    res = await db["auto_greet_settings"].find_one({"user_id": user_id})
+    default = {
+        "active": 0,
+        "messages": ["Hello everyone!", "Hope you all are having a great day!", "Check out our community!"],
+        "interval": 30
+    }
+    return res if res else default
+
 # --- 7. PROXY OBJECTS FOR ADMIN COMMANDS ---
 class CollectionProxy:
     def __init__(self, table_name):
