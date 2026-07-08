@@ -19,6 +19,7 @@ MODULE_MAP = {
     "reaction": "modules.fun.reaction",
     "extra_fun": "modules.fun.extra",
     "raid": "modules.fun.raid",
+    "auto_greet": "modules.fun.auto_greet",
     # Management Category
     "tagger": "modules.management.tagger",
     "stealth": "modules.management.stealth",
