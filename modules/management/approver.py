@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from telethon import events, types, functions
-from telethon.tl.functions.messages import GetChatJoinRequestsRequest, HideChatJoinRequestRequest
+# 🔥 Import fix: Specific functions ki jagah poora 'functions' module use karenge
 from telethon.errors import FloodWaitError
 from database import set_approve_settings, get_approve_settings
 
@@ -16,14 +16,13 @@ def register(client):
         await event.edit("🔄 **Initializing Join Request Engine...**")
         
         try:
-            # 1. Resolve the chat entity properly
+            # Resolve the chat entity
             chat = await client.get_input_entity(chat_id)
             
             total_approved = 0
             while True:
-                # 2. Fetch Join Requests (Batch of 100)
-                # Offset use kar rahe hain taaki pagination sahi chale
-                res = await client(GetChatJoinRequestsRequest(
+                # 🔥 FIXED CALL: functions.messages format use kiya hai jo fail nahi hota
+                res = await client(functions.messages.GetChatJoinRequestsRequest(
                     peer=chat,
                     limit=100
                 ))
@@ -31,43 +30,42 @@ def register(client):
                 if not res.requests:
                     break
                 
-                await event.edit(f"⏳ **Approving batch...** (Current: `{total_approved}`)")
+                await event.edit(f"⏳ **Approving batch...** (Total so far: `{total_approved}`)")
                 
                 for req in res.requests:
                     try:
-                        # 3. Approve the User
-                        await client(HideChatJoinRequestRequest(
+                        # 🔥 FIXED CALL: HideChatJoinRequestRequest
+                        await client(functions.messages.HideChatJoinRequestRequest(
                             peer=chat,
                             user_id=req.user_id,
                             approved=True
                         ))
                         total_approved += 1
-                        # Fast processing but safe
-                        await asyncio.sleep(0.4) 
+                        await asyncio.sleep(0.5) # Anti-Spam delay
                         
                     except FloodWaitError as f:
-                        await event.respond(f"⚠️ **FloodWait:** Sleeping for {f.seconds}s...")
+                        await event.respond(f"⚠️ **Telegram Limit:** Sleeping for {f.seconds}s...")
                         await asyncio.sleep(f.seconds)
                     except Exception as e:
-                        log.error(f"Approval error: {e}")
                         continue
                 
-                # Chota gap batches ke beech me
+                # Batch gap
                 await asyncio.sleep(2)
 
             await event.respond(f"✅ **Mission Successful!**\nApproved `{total_approved}` members in this chat.")
             
         except Exception as e:
-            await event.edit(f"❌ **Failed:** `{str(e)}` \n\n**Reasons:**\n1. I might not be Admin.\n2. This chat doesn't have 'Join Requests' enabled.\n3. Telethon Peer Mismatch.")
+            log.error(f"ApproveAll Error: {e}")
+            await event.edit(f"❌ **Failed:** `{str(e)}` \n\nCheck if Join Requests are active in this chat.")
 
-    # --- 2. TOGGLE AUTO-APPROVE ---
+    # --- 2. TOGGLE AUTO-APPROVE (.autoapprove on/off) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.autoapprove (on|off)'))
     async def toggle_auto(event):
         mode = event.pattern_match.group(1).lower()
         is_on = (mode == "on")
         await set_approve_settings(event.sender_id, is_on)
         status = "ENABLED ✅" if is_on else "DISABLED 🛑"
-        await event.edit(f"🛡️ **Auto-Approve status:** {status}")
+        await event.edit(f"🛡️ **Join Guard:** Auto-approve is now **{status}**.")
 
     # --- 3. REAL-TIME AUTO APPROVER ---
     @client.on(events.Raw(types.UpdateBotChatJoinRequest))
@@ -75,10 +73,11 @@ def register(client):
         try:
             me = await client.get_me()
             if await get_approve_settings(me.id):
-                await client(HideChatJoinRequestRequest(
+                # 🔥 FIXED CALL: Auto-approver for new requests
+                await client(functions.messages.HideChatJoinRequestRequest(
                     peer=update.peer,
                     user_id=update.user_id,
                     approved=True
                 ))
-        except:
-            pass
+        except Exception as e:
+            log.debug(f"Auto-approve background fail: {e}")
