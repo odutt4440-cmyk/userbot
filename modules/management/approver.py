@@ -1,125 +1,134 @@
 import asyncio
 import logging
-from telethon import events, types, functions, __version__ as tv
-from telethon.errors import FloodWaitError
+from telethon import events, types, functions
+from telethon.errors import FloodWaitError, HideRequesterMissingError
 from database import set_approve_settings, get_approve_settings
 
 log = logging.getLogger(__name__)
 
-# --- 🔥 THE BINARY BYPASS (Constructor IDs) ---
-# Ye IDs Telegram API ke core se li gayi hain. 
-# Inhe kisi library version ki zaroorat nahi hoti.
-
-class GetRequestsBinary(functions.TLRequest):
-    CONSTRUCTOR_ID = 0xad6134f0
-    SUBCLASS_OF_ID = 0x391f748a
-    def __init__(self, peer, limit=100):
-        self.peer = peer
-        self.limit = limit
-    def __bytes__(self):
-        return b''.join([
-            self.CONSTRUCTOR_ID.to_bytes(4, 'little'),
-            self.peer.__bytes__(),
-            self.limit.to_bytes(4, 'little'),
-            b'\x00' * 12 # Padding for optional fields
-        ])
-
-class HideRequestBinary(functions.TLRequest):
-    CONSTRUCTOR_ID = 0x7fe2e718
-    SUBCLASS_OF_ID = 0xf5b3b9b
-    def __init__(self, peer, user_id, approved=True):
-        self.peer = peer
-        self.user_id = user_id
-        self.approved = approved
-    def __bytes__(self):
-        return b''.join([
-            self.CONSTRUCTOR_ID.to_bytes(4, 'little'),
-            b'\x01\x00\x00\x00' if self.approved else b'\x00\x00\x00\x00',
-            self.peer.__bytes__(),
-            self.user_id.__bytes__(),
-        ])
-
 def register(client):
-    log.info(f"⚙️ Approver Module Loaded. Telethon Version in Runtime: {tv}")
 
     # --- 1. APPROVE ALL PENDING (.approveall) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.approveall'))
     async def approve_all_handler(event):
         if event.is_private:
-            return await event.edit("❌ **Error:** Run this inside the group.")
+            return await event.edit("❌ **Error:** Please run this command INSIDE the group.")
 
-        await event.edit(f"🔄 **Engine Booting...** (Library: v{tv})")
+        await event.edit("🔄 **Approving all pending join requests...**")
         chat_id = event.chat_id
-        
+
         try:
-            chat = await client.get_input_entity(chat_id)
-            total_approved = 0
+            chat = await client.get_entity(chat_id)
             
-            while True:
-                # 🔥 TRY 1: Standard Method
-                try:
-                    res = await client(functions.messages.GetChatJoinRequestsRequest(
-                        peer=chat, limit=100
-                    ))
-                except AttributeError:
-                    # 🔥 TRY 2: Binary Fallback if Library is too old
-                    log.warning("Library outdated, using Binary Bypass...")
-                    res = await client(GetRequestsBinary(peer=chat, limit=100))
+            # Method 1: Directly approve ALL pending requests in one go
+            # Telethon 1.44 has HideAllChatJoinRequestsRequest
+            try:
+                result = await client(functions.messages.HideAllChatJoinRequestsRequest(
+                    peer=chat,
+                    approved=True
+                ))
                 
-                if not res or not hasattr(res, 'requests') or not res.requests:
-                    break
+                # Count how many were approved from the updates
+                count = 0
+                if result:
+                    for update in result.updates:
+                        if hasattr(update, 'updates') and update.updates:
+                            for u in update.updates:
+                                if isinstance(u, types.UpdatePendingJoinRequests):
+                                    count = getattr(u, 'pending', 0)
+                                    break
+                        elif isinstance(update, types.UpdatePendingJoinRequests):
+                            count = getattr(update, 'pending', 0)
+                            break
                 
-                await event.edit(f"⏳ **Clearing Requests...** (Approved: `{total_approved}`)")
+                await event.edit(f"✅ **Successfully approved all pending requests!**")
                 
-                for req in res.requests:
-                    try:
-                        try:
-                            await client(functions.messages.HideChatJoinRequestRequest(
-                                peer=chat, user_id=req.user_id, approved=True
-                            ))
-                        except AttributeError:
-                            await client(HideRequestBinary(peer=chat, user_id=req.user_id, approved=True))
-                        
-                        total_approved += 1
-                        await asyncio.sleep(0.4) 
-                        
-                    except FloodWaitError as f:
-                        await event.respond(f"⚠️ **Limit:** Sleeping {f.seconds}s...")
-                        await asyncio.sleep(f.seconds)
-                    except:
-                        continue
+            except HideRequesterMissingError:
+                await event.edit("📭 **No pending join requests found in this chat.**")
+            except Exception as api_err:
+                error_str = repr(api_err)
+                log.error(f"HideAll failed: {error_str}")
                 
-                await asyncio.sleep(1.5)
+                # Method 2: If HideAll fails, try fetching via get_participants approach
+                # or just report the error
+                if "FLOOD_WAIT" in error_str:
+                    return await event.edit(f"⚠️ **Rate limited.** Try again later.")
+                else:
+                    return await event.edit(f"❌ **Error:** `{error_str}`")
 
-            if total_approved == 0:
-                await event.edit("📭 **No requests found. Check Group Settings > Join Requests.**")
-            else:
-                await event.respond(f"✅ **Mission Successful!**\nApproved `{total_approved}` members.")
-            
         except Exception as e:
-            log.error(f"Fatal Error: {repr(e)}")
-            await event.edit(f"❌ **Error:** `{str(e)}` \n\nEnsure Userbot is OWNER/ADMIN.")
+            error_details = repr(e)
+            log.error(f"ApproveAll Fatal Error: {error_details}")
+            await event.edit(f"❌ **Fatal Error:** `{error_details}`")
 
-    # --- 2. TOGGLE AUTO-APPROVE ---
+    # --- 2. APPROVE BY ID (new - exact method) ---
+    @client.on(events.NewMessage(outgoing=True, pattern=r'^\.approve (\d+)'))
+    async def approve_by_id_handler(event):
+        """Usage: .approve 123456789 - Approve a specific user by ID"""
+        if event.is_private:
+            return await event.edit("❌ **Error:** Please run this command INSIDE the group.")
+
+        user_id = int(event.pattern_match.group(1))
+        chat_id = event.chat_id
+
+        try:
+            chat = await client.get_entity(chat_id)
+            user = await client.get_entity(user_id)
+            
+            await client(functions.messages.HideChatJoinRequestRequest(
+                peer=chat,
+                user_id=user,
+                approved=True
+            ))
+            
+            await event.edit(f"✅ **Approved user:** `{user_id}`")
+        except Exception as e:
+            await event.edit(f"❌ **Error:** `{repr(e)}`")
+
+    # --- 3. TOGGLE AUTO-APPROVE ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.autoapprove (on|off)'))
     async def toggle_auto(event):
         mode = event.pattern_match.group(1).lower()
         is_on = (mode == "on")
         await set_approve_settings(event.sender_id, is_on)
-        await event.edit(f"🛡️ **Join Guard:** {'ENABLED ✅' if is_on else 'DISABLED 🛑'}")
+        status = "ENABLED ✅" if is_on else "DISABLED 🛑"
+        await event.edit(f"🛡️ **Join Guard:** Auto-approve is now **{status}**.")
 
-    # --- 3. AUTO-APPROVER FOR NEW REQUESTS ---
+    # --- 4. RAW HANDLER FOR NEW REQUESTS ---
     @client.on(events.Raw())
     async def raw_handler(update):
-        if "ChatJoinRequest" in type(update).__name__:
+        update_name = type(update).__name__
+        
+        # Handle UpdatePendingJoinRequests and UpdateBotChatInviteRequester
+        if "PendingJoinRequests" in update_name or "ChatInviteRequester" in update_name:
             try:
                 me = await client.get_me()
                 if await get_approve_settings(me.id):
-                    try:
+                    # Extract IDs from the update
+                    # UpdatePendingJoinRequests has: peer, pending, users (optional)
+                    # UpdateBotChatInviteRequester has: peer, user_id, date, about, invite
+                    
+                    if hasattr(update, 'user_id') and update.user_id:
+                        user_id = update.user_id
+                        try:
+                            user = await client.get_entity(user_id) if isinstance(user_id, int) else user_id
+                        except:
+                            user = user_id
+                        
                         await client(functions.messages.HideChatJoinRequestRequest(
-                            peer=update.peer, user_id=update.user_id, approved=True
+                            peer=update.peer,
+                            user_id=user,
+                            approved=True
                         ))
-                    except:
-                        await client(HideRequestBinary(peer=update.peer, user_id=update.user_id, approved=True))
-                    log.info(f"✅ Auto-approved {update.user_id}")
-            except: pass
+                        log.info(f"✅ Auto-approved user: {update.user_id}")
+                    
+                    # If there's no single user_id, try HideAll
+                    elif hasattr(update, 'peer') and update.peer:
+                        await client(functions.messages.HideAllChatJoinRequestsRequest(
+                            peer=update.peer,
+                            approved=True
+                        ))
+                        log.info(f"✅ Auto-approved all pending for chat: {update.peer}")
+                        
+            except Exception as e:
+                log.error(f"Auto-approve error: {repr(e)}")
