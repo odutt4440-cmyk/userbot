@@ -6,27 +6,6 @@ from database import set_approve_settings, get_approve_settings
 
 log = logging.getLogger(__name__)
 
-# --- 🔥 THE RAW PROTOCOL OVERRIDE (Jad se ilaaj) ---
-# Ye classes seedha Telegram ke server se binary level par baat karti hain
-# Library version koi bhi ho, ye 100% kaam karengi.
-
-class GetRequests(functions.TLRequest):
-    CONSTRUCTOR_ID = 0xad6134f0
-    SUBCLASS_OF_ID = 0x391f748a
-    def __init__(self, peer, limit=100):
-        self.peer = peer
-        self.limit = limit
-    def to_dict(self): return {'_': 'GetChatJoinRequestsRequest', 'peer': self.peer, 'limit': self.limit}
-
-class HideRequest(functions.TLRequest):
-    CONSTRUCTOR_ID = 0x7fe2e718
-    SUBCLASS_OF_ID = 0xf5b3b9b
-    def __init__(self, peer, user_id, approved=True):
-        self.peer = peer
-        self.user_id = user_id
-        self.approved = approved
-    def to_dict(self): return {'_': 'HideChatJoinRequestRequest', 'peer': self.peer, 'user_id': self.user_id, 'approved': self.approved}
-
 def register(client):
 
     # --- 1. APPROVE ALL PENDING ---
@@ -39,22 +18,38 @@ def register(client):
         chat_id = event.chat_id
         
         try:
+            # 1. Resolve Chat
             chat = await client.get_input_entity(chat_id)
             total_approved = 0
             
+            # 🔥 THE SEARCH LOGIC: Telethon ke alag versions me alag naam ho sakte hain
+            # Hum saare possible names try karenge
+            GetReq = getattr(functions.messages, 'GetChatJoinRequestsRequest', 
+                     getattr(functions.messages, 'GetChatJoinRequests', None))
+            
+            HideReq = getattr(functions.messages, 'HideChatJoinRequestRequest', 
+                      getattr(functions.messages, 'HideChatJoinRequest', None))
+
+            if not GetReq:
+                return await event.edit("❌ **Fatal:** Your Telethon version is strictly blocking this feature. Please 'Restart' Railway Service (not just redeploy).")
+
             while True:
-                # 🔥 RAW API CALL: No library attribute needed
-                res = await client(GetRequests(peer=chat, limit=100))
+                # 2. Fetch Requests
+                try:
+                    res = await client(GetReq(peer=chat, limit=100))
+                except Exception as api_e:
+                    log.error(f"Fetch Fail: {api_e}")
+                    break
                 
                 if not res or not hasattr(res, 'requests') or not res.requests:
                     break
                 
-                await event.edit(f"⏳ **Clearing Requests...** (Current: `{total_approved}`)")
+                await event.edit(f"⏳ **Clearing Requests...** (Approved: `{total_approved}`)")
                 
                 for req in res.requests:
                     try:
-                        # 🔥 RAW API CALL: Approve
-                        await client(HideRequest(peer=chat, user_id=req.user_id, approved=True))
+                        # 3. Approve User
+                        await client(HideReq(peer=chat, user_id=req.user_id, approved=True))
                         total_approved += 1
                         await asyncio.sleep(0.4) 
                         
@@ -67,13 +62,13 @@ def register(client):
                 await asyncio.sleep(1.5)
 
             if total_approved == 0:
-                await event.edit("📭 **No requests found. Make sure I am Admin.**")
+                await event.edit("📭 **No requests found. Check if requests are pending in Group Settings.**")
             else:
                 await event.respond(f"✅ **Mission Successful!**\nApproved `{total_approved}` members.")
             
         except Exception as e:
             log.error(f"Fatal Error: {repr(e)}")
-            await event.edit(f"❌ **Fatal Error:** `{repr(e)}` \n\nEnsure Admin with 'Add Members' rights.")
+            await event.edit(f"❌ **Error:** `{repr(e)}` \n\nMake sure I have 'Invite Users' admin power.")
 
     # --- 2. TOGGLE AUTO-APPROVE ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.autoapprove (on|off)'))
@@ -92,8 +87,10 @@ def register(client):
             try:
                 me = await client.get_me()
                 if await get_approve_settings(me.id):
-                    # 🔥 RAW API CALL: Instant Approve
-                    await client(HideRequest(peer=update.peer, user_id=update.user_id, approved=True))
-                    log.info(f"✅ Auto-approved {update.user_id}")
+                    HideReq = getattr(functions.messages, 'HideChatJoinRequestRequest', 
+                              getattr(functions.messages, 'HideChatJoinRequest', None))
+                    if HideReq:
+                        await client(HideReq(peer=update.peer, user_id=update.user_id, approved=True))
+                        log.info(f"✅ Auto-approved {update.user_id}")
             except:
                 pass
