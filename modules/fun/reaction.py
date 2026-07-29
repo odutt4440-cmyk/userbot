@@ -6,26 +6,24 @@ from database import set_reaction_data, get_reaction_data, db
 
 log = logging.getLogger(__name__)
 
-# --- GLOBAL MEMORY (Multi-user safe) ---
-# Format: {owner_id: {chat_id: emoji}}
+# --- GLOBAL MEMORY ---
 REACT_ALL = {}
-# Format: {owner_id: {chat_id: {target_user_id: emoji}}}
 REACT_TARGETS = {}
+OWNER_ID_CACHE = {} # {client_object_id: user_id}
 
 def register(client):
     
     async def sync_reactions():
         try:
+            # Cache owner ID once during registration
             me = await client.get_me()
+            OWNER_ID_CACHE[id(client)] = me.id
             user_id = me.id
             
             cursor = db["reaction_settings"].find({"user_id": user_id, "active": 1})
             async for doc in cursor:
                 c_id = doc["chat_id"]
                 emoji = doc["emoji"]
-                
-                # Check if it was a target-specific or chat-wide setting
-                # (Assuming database structure stores target info if needed)
                 if user_id not in REACT_ALL: REACT_ALL[user_id] = {}
                 REACT_ALL[user_id][c_id] = emoji
                 
@@ -33,7 +31,6 @@ def register(client):
         except Exception as e:
             log.error(f"Sync Error: {e}")
 
-    # Start Sync
     client.loop.create_task(sync_reactions())
 
     # --- 1. ENABLE AUTO-REACT ---
@@ -41,89 +38,79 @@ def register(client):
     async def enable_react(event):
         emoji = event.pattern_match.group(1)
         if not emoji:
-            return await event.edit("❌ **Error:** Provide an emoji. Example: `.autoreact 🔥` ")
+            return await event.edit("❌ **Error:** Provide an emoji.")
 
         chat_id = event.chat_id
-        me = await client.get_me()
-        user_id = me.id
-        
+        user_id = OWNER_ID_CACHE.get(id(client))
+        if not user_id: return
+
         if user_id not in REACT_ALL: REACT_ALL[user_id] = {}
         if user_id not in REACT_TARGETS: REACT_TARGETS[user_id] = {}
 
         if event.is_reply:
-            # --- TARGET SPECIFIC USER (Can be a Bot!) ---
             reply = await event.get_reply_message()
             target_id = reply.sender_id
-            
             if chat_id not in REACT_TARGETS[user_id]: REACT_TARGETS[user_id][chat_id] = {}
             REACT_TARGETS[user_id][chat_id][target_id] = emoji
-            
-            # Remove from 'All' if they were there
             if chat_id in REACT_ALL[user_id]: del REACT_ALL[user_id][chat_id]
-            
-            await event.edit(f"🎭 **Target Set:** Reacting with {emoji} to this specific user/bot.")
+            await event.edit(f"🎭 **Target Set:** {emoji}")
         else:
-            # --- TARGET EVERYONE IN CHAT ---
             REACT_ALL[user_id][chat_id] = emoji
-            await event.edit(f"🎭 **GC Mode:** Reacting with {emoji} to **ALL** messages here.")
+            await event.edit(f"🎭 **GC Mode:** {emoji}")
 
         await set_reaction_data(user_id, chat_id, emoji)
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
         await event.delete()
 
     # --- 2. STOP AUTO-REACT ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'(?i)^\.stopreact'))
     async def stop_react(event):
         chat_id = event.chat_id
-        me = await client.get_me()
-        user_id = me.id
+        user_id = OWNER_ID_CACHE.get(id(client))
+        if not user_id: return
         
-        if user_id in REACT_ALL and chat_id in REACT_ALL[user_id]:
-            del REACT_ALL[user_id][chat_id]
-        if user_id in REACT_TARGETS and chat_id in REACT_TARGETS[user_id]:
-            del REACT_TARGETS[user_id][chat_id]
-            
-        await db["reaction_settings"].update_one(
-            {"user_id": user_id, "chat_id": chat_id},
-            {"$set": {"active": 0}}
-        )
-        await event.edit("🛑 **Auto-Reaction Disabled.**")
+        try:
+            if user_id in REACT_ALL and chat_id in REACT_ALL[user_id]:
+                del REACT_ALL[user_id][chat_id]
+            if user_id in REACT_TARGETS and chat_id in REACT_TARGETS[user_id]:
+                del REACT_TARGETS[user_id][chat_id]
+                
+            await db["reaction_settings"].update_one(
+                {"user_id": user_id, "chat_id": chat_id},
+                {"$set": {"active": 0}}
+            )
+            await event.edit("🛑 **Auto-Reaction Disabled.**")
+        except: pass
         await asyncio.sleep(2)
         await event.delete()
 
-    # --- 3. THE REACTION ENGINE ---
+    # --- 3. THE REACTION ENGINE (High Speed) ---
     @client.on(events.NewMessage(incoming=True))
     async def reaction_worker(event):
-        # Only process if we have an active owner
-        me = await client.get_me()
-        user_id = me.id
+        user_id = OWNER_ID_CACHE.get(id(client))
+        if not user_id: return
         
         chat_id = event.chat_id
         sender_id = event.sender_id
         emoji = None
 
-        # 1. Check Specific Target First
-        if (user_id in REACT_TARGETS and 
-            chat_id in REACT_TARGETS[user_id] and 
+        if (user_id in REACT_TARGETS and chat_id in REACT_TARGETS[user_id] and 
             sender_id in REACT_TARGETS[user_id][chat_id]):
             emoji = REACT_TARGETS[user_id][chat_id][sender_id]
-        
-        # 2. Check Global Chat Setting
         elif user_id in REACT_ALL and chat_id in REACT_ALL[user_id]:
             emoji = REACT_ALL[user_id][chat_id]
 
-        if emoji:
-            # 🔥 FIX: Apne khud ke messages par react mat karo
-            if event.out: return
-            
-            # 🔥 FIX: Doosre bots par react karne ki permission di (Removed bot check)
-            
+        if emoji and not event.out:
             try:
+                # Custom Emoji Support (For Premium Users)
+                reaction = [types.ReactionEmoji(emoticon=emoji)]
+                if emoji.isdigit(): # If ID provided for premium emoji
+                    reaction = [types.ReactionCustomEmoji(document_id=int(emoji))]
+
                 await client(functions.messages.SendReactionRequest(
                     peer=event.input_chat,
                     msg_id=event.id,
                     add_to_recent=True,
-                    reaction=[types.ReactionEmoji(emoticon=emoji)]
+                    reaction=reaction
                 ))
-            except Exception as e:
-                log.debug(f"Reaction fail: {e}")
+            except: pass
