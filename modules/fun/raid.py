@@ -464,19 +464,38 @@ def register(client):
     # --- 4. STOP COMMAND (.stop) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r"^\.stop"))
     async def stop_handler(event):
-        me = await client.get_me()
-        chat_id = event.chat_id
-        
-        # Stop Spam/Raid
-        session = (chat_id, me.id)
-        if session in SPAM_RUNNING: SPAM_RUNNING.remove(session)
-        
-        # Stop Reply Raid
-        if chat_id in REPLY_RAIDS: del REPLY_RAIDS[chat_id]
-        
-        await event.edit("🛑 **All active raids/spams stopped for this chat.**")
-        await asyncio.sleep(3)
-        await event.delete()
+        try:
+            # 1. Sabse pehle resources fetch karo
+            me = await client.get_me()
+            chat_id = event.chat_id
+            session = (chat_id, me.id)
+
+            # 2. State Cleanup (Logic pehle stop karo)
+            if session in SPAM_RUNNING:
+                SPAM_RUNNING.remove(session)
+            
+            if chat_id in REPLY_RAIDS:
+                del REPLY_RAIDS[chat_id]
+
+            # 3. UI Notification (Edit)
+            # Try-except lagaya hai taaki agar edit fail ho toh nikaal jaye
+            try:
+                await event.edit("🛑 **All active raids/spams stopped for this chat.**")
+            except:
+                pass
+
+            # 4. Wait for 2 seconds
+            await asyncio.sleep(2)
+
+            # 5. 🔥 Finally Delete the message
+            try:
+                await event.delete()
+            except:
+                pass
+
+        except Exception as e:
+            # Logs me sirf debug ke liye error dikhayega, bot crash nahi hoga
+            log.debug(f"Stop command error: {e}")
 
     # --- CLEAR COMMAND (.clear) ---
     @client.on(events.NewMessage(outgoing=True, pattern=r"^\.clear"))
