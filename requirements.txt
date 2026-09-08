@@ -9,6 +9,6 @@ requests
 aiohttp
 pillow
 wordfreq
-pytgcalls==2.1.0
+pytgcalls
 
 
