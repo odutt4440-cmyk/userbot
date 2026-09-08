@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install EVERYTHING needed for pytgcalls compilation
+# Install system dependencies with ALL required headers
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     build-essential \
@@ -16,17 +16,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libavutil-dev \
     libswscale-dev \
     libswresample-dev \
+    libavfilter-dev \
     fonts-dejavu-core \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Step to ensure pip is ready to build native extensions
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel Cython
 
-# Upgrade pip and install requirements
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
