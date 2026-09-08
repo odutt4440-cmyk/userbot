@@ -1,8 +1,10 @@
 FROM python:3.11-slim
 
-# Install system dependencies including FFmpeg
+# Install minimal system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    build-essential \
+    python3-dev \
     fonts-dejavu-core \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -10,7 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Railway par cache issue se bachne ke liye naya tarika
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
