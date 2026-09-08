@@ -80,4 +80,22 @@ def register(client):
             await status.edit(f"❌ **Stream Failed:** `{str(e)}` ")
 
     # --- 3. STOP STREAM (.vcstop) ---
-    @c
+    @client.on(events.NewMessage(chats='me', pattern=r'^\.vcstop'))
+    async def stop_vc_stream(event):
+        user_id = event.sender_id
+        chat_id = await get_vc_chat(user_id)
+        temp_file = f"vc_stream_{user_id}.mp3"
+
+        if user_id in VC_SESSIONS:
+            try:
+                # Leave Call
+                await VC_SESSIONS[user_id].leave_call(chat_id)
+                # Cleanup File
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                
+                await event.edit("🛑 **VC Stream Stopped.** Memory and cache cleared.")
+            except Exception as e:
+                await event.edit(f"⚠️ **Note:** Bot left VC with warning: `{e}` ")
+        else:
+            await event.edit("❌ **No active VC session found.**")
