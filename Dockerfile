@@ -1,10 +1,14 @@
 FROM python:3.11-slim
 
-# Install minimal system dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     build-essential \
     python3-dev \
+    cmake \
+    pkg-config \
+    libffi-dev \
+    libssl-dev \
     fonts-dejavu-core \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -12,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
-# Railway par cache issue se bachne ke liye naya tarika
+# Pip upgrade and install
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
