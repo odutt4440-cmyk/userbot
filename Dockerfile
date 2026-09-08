@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install system dependencies with ALL required headers
+# Install system dependencies with git
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     build-essential \
@@ -18,16 +18,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libswresample-dev \
     libavfilter-dev \
     fonts-dejavu-core \
+    git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Step to ensure pip is ready to build native extensions
+# Step to ensure pip is ready and can handle pre-releases
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel Cython
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# 🔥 Change: Allow pre-release versions for tgcalls compatibility
+RUN pip install --no-cache-dir --pre -r requirements.txt
 
 COPY . .
 
