@@ -9,6 +9,6 @@ requests
 aiohttp
 pillow
 wordfreq
-certifi
+pytgcalls[telethon]
 
 
