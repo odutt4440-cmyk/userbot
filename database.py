@@ -506,6 +506,21 @@ async def get_approve_settings(user_id):
     res = await db["approve_settings"].find_one({"user_id": user_id})
     return res.get("auto_approve", 0) == 1 if res else False
 
+# --- 13. VC STREAMER SETTINGS ---
+
+async def set_vc_chat(user_id, chat_id):
+    if settings_db is not None:
+        await db["vc_settings"].update_one(
+            {"user_id": user_id}, 
+            {"$set": {"target_chat": chat_id, "updated_at": datetime.datetime.now()}}, 
+            upsert=True
+        )
+
+async def get_vc_chat(user_id):
+    if settings_db is None: return None
+    res = await db["vc_settings"].find_one({"user_id": user_id})
+    return res.get("target_chat") if res else None
+
 # --- 7. PROXY OBJECTS FOR ADMIN COMMANDS ---
 class CollectionProxy:
     def __init__(self, table_name):
