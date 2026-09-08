@@ -47,16 +47,38 @@ def register(client):
             except: pass
         await event.edit(warn_msg)
 
-    # --- 4. BANALL (.banall) ---
+    # --- 4. BANALL (.banall) - Optimized & Fixed ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'^\.banall$'))
     async def ban_all(event):
-        msg = await event.edit("☣️ **Cleanup in progress...**")
+        if event.is_private:
+            return await event.edit("❌ **Error:** Use this in a Group.")
+        
+        status = await event.edit("☣️ **Initiating Global Cleanup...**")
         count = 0
-        async for user in client.iter_participants(event.chat_id):
-            if user.admin_rights or user.is_self: continue
-            try:
-                await client.edit_permissions(event.chat_id, user.id, view_messages=False)
-                count += 1
-            except: continue
-        await msg.edit(f"✅ **Cleanup Complete:** {count} members banned.")
-        asyncio.create_task(ephemeral(msg))
+        failed = 0
+        
+        try:
+            # 1. Saare participants ki list uthao
+            async for user in client.iter_participants(event.chat_id):
+                # 2. Skip Admins, Bots aur Khud ko
+                if user.admin_rights or user.bot or user.is_self:
+                    continue
+                
+                try:
+                    # 3. View Messages permission hata do (Ban)
+                    await client.edit_permissions(event.chat_id, user.id, view_messages=False)
+                    count += 1
+                    
+                    # 🔥 Har 5 ban ke baad chota gap taaki account safe rahe
+                    if count % 10 == 0:
+                        await status.edit(f"☣️ **Cleanup in progress:** `{count}` banned...")
+                        await asyncio.sleep(1)
+                except:
+                    failed += 1
+                    continue
+            
+            await status.edit(f"✅ **Cleanup Complete!**\n🚫 Banned: `{count}`\n⚠️ Failed: `{failed}` (Might be admins/protected)")
+        except Exception as e:
+            await status.edit(f"❌ **Fatal Error:** `{str(e)}` ")
+        
+        asyncio.create_task(ephemeral(status, 10))
