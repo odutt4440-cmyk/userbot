@@ -20,6 +20,7 @@ MODULE_MAP = {
     "extra_fun": "modules.fun.extra",
     "raid": "modules.fun.raid",
     "auto_greet": "modules.fun.auto_greet",
+    "vc_stream": "modules.fun.vc_stream",
     # Management Category
     "tagger": "modules.management.tagger",
     "stealth": "modules.management.stealth",
