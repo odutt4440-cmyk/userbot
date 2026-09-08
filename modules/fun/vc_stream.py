@@ -1,68 +1,83 @@
 import asyncio
 import os
+import logging
 from telethon import events
 from pytgcalls import PyTgCalls
 from pytgcalls.types import AudioPiped
 from database import set_vc_chat, get_vc_chat
 
-# Global store for VC instances
-VC_SESSIONS = {} 
+log = logging.getLogger(__name__)
+
+# Global tracking for active VC sessions
+# {user_id: pytgcalls_instance}
+VC_SESSIONS = {}
 
 def register(client):
 
-    async def get_call_handler(user_id):
+    # --- Helper: Get/Start VC Session ---
+    async def get_vc_session(user_id):
         if user_id not in VC_SESSIONS:
-            handler = PyTgCalls(client)
-            await handler.start()
-            VC_SESSIONS[user_id] = handler
+            try:
+                # Naya instance banao
+                session = PyTgCalls(client)
+                await session.start()
+                VC_SESSIONS[user_id] = session
+                log.info(f"🎙️ VC session initialized for {user_id}")
+            except Exception as e:
+                log.error(f"VC Start Error for {user_id}: {e}")
+                return None
         return VC_SESSIONS[user_id]
 
-    # --- 1. SET TARGET (.vctarget @username) ---
+    # --- 1. SET TARGET GROUP (.vctarget @username) ---
     @client.on(events.NewMessage(chats='me', pattern=r'^\.vctarget(?:\s+(.*))?'))
-    async def set_target(event):
+    async def set_vc_target(event):
         target = event.pattern_match.group(1)
-        if not target: return await event.edit("❌ **Usage:** `.vctarget @group` ")
+        if not target:
+            return await event.edit("❌ **Usage:** `.vctarget @group_username` or Chat ID.")
         
         try:
+            # Username/ID ko resolve karo
             entity = await client.get_entity(target)
             await set_vc_chat(event.sender_id, entity.id)
-            await event.edit(f"🎯 **VC Locked:** `{entity.title}`")
-        except: await event.edit("❌ **Invalid Group.**")
+            await event.edit(f"🎯 **VC Destination Locked:** `{entity.title}`\nUse `.vcstart` on an audio file now.")
+        except Exception as e:
+            await event.edit(f"❌ **Failed to resolve:** `{str(e)}` ")
 
-    # --- 2. STREAM VOICE/AUDIO (.vcstart - Reply to Audio) ---
+    # --- 2. START VC STREAM (.vcstart - Reply to Audio) ---
     @client.on(events.NewMessage(chats='me', pattern=r'^\.vcstart'))
-    async def stream_audio(event):
+    async def start_vc_stream(event):
         reply = await event.get_reply_message()
         if not (reply and (reply.audio or reply.voice)):
-            return await event.edit("❌ **Reply to a Voice or Audio file.**")
+            return await event.edit("❌ **Error:** Please reply to an audio or voice file.")
 
         chat_id = await get_vc_chat(event.sender_id)
-        if not chat_id: return await event.edit("❌ **Set `.vctarget` first.**")
+        if not chat_id:
+            return await event.edit("❌ **Error:** Set a target group first using `.vctarget` ")
 
-        status = await event.edit("📡 **Preparing Stream...**")
-        file_path = f"vc_{event.sender_id}.raw" # Use raw for speed
-
+        status = await event.edit("📡 **Syncing with Voice Chat...**")
+        
+        # Temp file path
+        temp_file = f"vc_stream_{event.sender_id}.mp3"
+        
         try:
-            # Download and stream
-            path = await client.download_media(reply, file_path)
-            call = await get_call_handler(event.sender_id)
+            # Audio download
+            await client.download_media(reply, temp_file)
+            
+            # Start/Get Call Instance
+            call = await get_vc_session(event.sender_id)
+            if not call:
+                return await status.edit("❌ **VC Error:** Calling engine failed to boot.")
 
-            await call.play(chat_id, AudioPiped(path))
-            await status.edit("🎙️ **Live on VC!**\nUse `.vcstop` to disconnect.")
+            # Play Audio directly
+            await call.play(
+                chat_id,
+                AudioPiped(temp_file)
+            )
+            
+            await status.edit(f"🎙️ **Streaming Live!**\n📍 **Group ID:** `{chat_id}`\n🎶 **Status:** Playing...")
         except Exception as e:
-            await status.edit(f"❌ **Error:** `{str(e)}` ")
+            if os.path.exists(temp_file): os.remove(temp_file)
+            await status.edit(f"❌ **Stream Failed:** `{str(e)}` ")
 
     # --- 3. STOP STREAM (.vcstop) ---
-    @client.on(events.NewMessage(chats='me', pattern=r'^\.vcstop'))
-    async def stop_stream(event):
-        user_id = event.sender_id
-        chat_id = await get_vc_chat(user_id)
-        
-        if user_id in VC_SESSIONS:
-            try:
-                await VC_SESSIONS[user_id].leave_call(chat_id)
-                # Cleanup temp file
-                if os.path.exists(f"vc_{user_id}.raw"): os.remove(f"vc_{user_id}.raw")
-                await event.edit("🛑 **Disconnected from VC.**")
-            except: await event.edit("⚠️ Already out.")
-        else: await event.edit("❌ No active stream.")
+    @c
