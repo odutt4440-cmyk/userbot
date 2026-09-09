@@ -3,8 +3,7 @@ import glob
 import logging
 from telethon import events
 from pytgcalls import PyTgCalls
-from pytgcalls.types import MediaStream
-from pytgcalls.types.stream import StreamAudioEnded
+from pytgcalls.types import MediaStream, StreamEnded
 from database import set_vc_chat, get_vc_chat
 
 log = logging.getLogger(__name__)
@@ -34,7 +33,8 @@ def register(client):
 
         @call.on_update()
         async def _on_stream_end(pytgcalls, update):
-            if isinstance(update, StreamAudioEnded):
+            # master API: StreamEnded with .stream_type (AUDIO/VIDEO)
+            if isinstance(update, StreamEnded) and update.stream_type == StreamEnded.Type.AUDIO:
                 st = state(user_id)
                 if st and st["queue"]:
                     await play_next(user_id)
@@ -53,7 +53,7 @@ def register(client):
         path, label = st["queue"].pop(0)
         st["now"] = label
         try:
-            await st["call"].play(st["chat"], MediaStream(path, video=False))
+            await st["call"].play(st["chat"], MediaStream(path, video_flags=MediaStream.Flags.IGNORE))
             log.info(f"Now streaming: {label}")
         except Exception as e:
             log.error(f"play_next failed for '{label}': {e}")
@@ -125,7 +125,7 @@ def register(client):
             if st["now"] is None:
                 st["now"] = label
                 await status.edit("📡 **Joining voice chat...**")
-                await call.play(chat_id, MediaStream(temp, video=False))
+                await call.play(chat_id, MediaStream(temp, video_flags=MediaStream.Flags.IGNORE))
                 await status.edit(
                     f"🎙️ **Streaming Live!**\n\n"
                     f"📍 **Chat:** `{chat_id}`\n"
@@ -169,10 +169,10 @@ def register(client):
             await event.edit("⏭️ **Skipping to next track...**")
             await play_next(event.sender_id)
         else:
-            # Queue empty -> DO NOT leave VC, just inform
+            # Queue empty -> stay in VC, just inform
             await event.edit(
-                "⚠️ **Queue is empty.** Current stream will finish on its own. "
-                "Use `.vcstop` to leave the voice chat."
+                "⚠️ **Queue is empty.** Current track will keep playing. "
+                "Queue more with `.vcstream` or stop with `.vcstop`."
             )
 
     # ---------------- 5. .vcstop ----------------
@@ -193,4 +193,18 @@ def register(client):
         await event.edit(
             "🛑 **Stream stopped.**\n"
             "Left voice chat • Queue cleared • Cache cleaned."
+        )
+
+    # ---------------- 6. .vchelp ----------------
+    @client.on(events.NewMessage(chats='me', pattern=r'^\.vchelp$'))
+    async def vc_help(event):
+        await event.edit(
+            "🎧 **VC Stream — Commands** (Saved Messages only)\n\n"
+            "🎯 `.vctarget @group` — Lock target group/chat for streaming\n"
+            "🎙️ `.vcstream` — Reply to audio/voice: play it in the VC (queues if busy)\n"
+            "📋 `.vcqueue` — Show current track and queue\n"
+            "⏭️ `.vcskip` — Skip to next queued track\n"
+            "🛑 `.vcstop` — Stop stream, leave VC, clear queue & cache\n"
+            "❓ `.vchelp` — Show this help\n\n"
+            "**Flow:** `.vctarget @group` → reply audio `.vcstream` → enjoy → `.vcstop`"
         )
