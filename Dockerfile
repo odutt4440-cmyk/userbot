@@ -1,6 +1,5 @@
 FROM python:3.11-slim
 
-# ffmpeg for pytgcalls MediaStream decoding, rest optional
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && apt-get clean \
@@ -11,7 +10,10 @@ WORKDIR /app
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# 🔑 पहले requirements, फिर ntgcalls को फोर्स अपग्रेड करें ताकि पुराना wheel न रह जाए
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -U ntgcalls
 
 COPY . .
 
