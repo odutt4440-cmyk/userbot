@@ -1,7 +1,7 @@
 import os
 import glob
 import logging
-from telethon import events
+from telethon import events, utils
 from pytgcalls import PyTgCalls
 from pytgcalls.types import MediaStream, StreamEnded
 from database import set_vc_chat, get_vc_chat
@@ -10,6 +10,13 @@ log = logging.getLogger(__name__)
 
 # state: {user_id: {"call": PyTgCalls, "chat": int, "queue": [(path, label)], "now": label|None}}
 VC = {}
+
+
+def marked_id(chat_id: int) -> int:
+    """Positive channel/supergroup ID ko -100 marked form mein convert."""
+    if chat_id > 0:
+        return int(f"-100{chat_id}")
+    return chat_id
 
 
 def register(client):
@@ -33,7 +40,6 @@ def register(client):
 
         @call.on_update()
         async def _on_stream_end(pytgcalls, update):
-            # master API: StreamEnded with .stream_type (AUDIO/VIDEO)
             if isinstance(update, StreamEnded) and update.stream_type == StreamEnded.Type.AUDIO:
                 st = state(user_id)
                 if st and st["queue"]:
@@ -68,23 +74,24 @@ def register(client):
             except OSError:
                 pass
 
-    # ---------------- 1. .vctarget ----------------
+    # ---------------- 1. .vctarget (link / username / chat id — sab chalega) ----------------
     @client.on(events.NewMessage(chats='me', pattern=r'^\.vctarget(?:\s+(.+))?$'))
     async def vc_target(event):
         target = event.pattern_match.group(1)
         if not target:
             return await event.edit(
-                "❌ **Usage:** `.vctarget @group_username` or `-100xxxxxxxxxx`"
+                "❌ **Usage:** `.vctarget @username` / `https://t.me/...` / `-100xxxxxxxxxx`"
             )
         try:
             entity = await client.get_entity(target.strip())
-            await set_vc_chat(event.sender_id, entity.id)
+            chat_id = utils.get_peer_id(entity)   # marked ID: -100... for channels/GCs
+            await set_vc_chat(event.sender_id, chat_id)
             st = state(event.sender_id)
             if st:
-                st["chat"] = entity.id
-            title = getattr(entity, "title", str(entity.id))
+                st["chat"] = chat_id
+            title = getattr(entity, "title", str(chat_id))
             await event.edit(
-                f"🎯 **VC Target Locked:** `{title}` (`{entity.id}`)\n\n"
+                f"🎯 **VC Target Locked:** `{title}` (`{chat_id}`)\n\n"
                 "ℹ️ Make sure:\n"
                 "• Your account is in that group\n"
                 "• A voice chat is already started\n\n"
@@ -107,6 +114,7 @@ def register(client):
             return await event.edit(
                 "❌ No target set. Use `.vctarget @group` first."
             )
+        chat_id = marked_id(chat_id)   # safety: old positive IDs bhi sahi ho jayengi
 
         status = await event.edit("⬇️ **Downloading audio...**")
         call = await get_call(event.sender_id)
@@ -200,8 +208,8 @@ def register(client):
     async def vc_help(event):
         await event.edit(
             "🎧 **VC Stream — Commands** (Saved Messages only)\n\n"
-            "🎯 `.vctarget @group` — Lock target group/chat for streaming\n"
-            "🎙️ `.vcstream` — Reply to audio/voice: play it in the VC (queues if busy)\n"
+            "🎯 `.vctarget @group` — Lock target group (link/username/ID)\n"
+            "🎙️ `.vcstream` — Reply to audio/voice: go live in the VC\n"
             "📋 `.vcqueue` — Show current track and queue\n"
             "⏭️ `.vcskip` — Skip to next queued track\n"
             "🛑 `.vcstop` — Stop stream, leave VC, clear queue & cache\n"
