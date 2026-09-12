@@ -3,7 +3,7 @@ import glob
 import logging
 from telethon import events, utils
 from pytgcalls import PyTgCalls
-from pytgcalls.types import MediaStream, StreamEnded
+from pytgcalls.types import MediaStream, StreamEnded, GroupCallConfig
 from database import set_vc_chat, get_vc_chat
 
 log = logging.getLogger(__name__)
@@ -25,6 +25,25 @@ def register(client):
     def state(user_id):
         return VC.get(user_id)
 
+    async def resolve_target(target: str):
+        """Resolve link / @username / chat ID.
+        Numeric IDs pehle session dialogs se resolve hote hain (access_hash cached),
+        private GCs ke liye zaroori."""
+        target = target.strip()
+
+        if target.lstrip('-').isdigit():
+            wanted = int(target)
+            raw = int(str(wanted).replace('-100', '', 1)) if str(wanted).startswith('-100') else abs(wanted)
+            async for dialog in client.iter_dialogs():
+                if dialog.id == wanted or utils.get_peer_id(dialog.entity) == wanted:
+                    return dialog.entity
+                cid = getattr(dialog.entity, 'channel_id', None)
+                if cid and (cid == raw or cid == abs(wanted)):
+                    return dialog.entity
+            return await client.get_entity(wanted)
+
+        return await client.get_entity(target)
+
     async def get_call(user_id) -> PyTgCalls | None:
         """One PyTgCalls instance per user, reused forever."""
         if user_id in VC:
@@ -33,7 +52,7 @@ def register(client):
             call = PyTgCalls(client)
             await call.start()
         except Exception as e:
-            log.error(f"VC init failed for {user_id}: {e}")
+            log.error(f"VC init failed for {user_id}: {type(e).__name__}: {e}", exc_info=True)
             return None
 
         VC[user_id] = {"call": call, "chat": None, "queue": [], "now": None}
@@ -59,10 +78,13 @@ def register(client):
         path, label = st["queue"].pop(0)
         st["now"] = label
         try:
-            await st["call"].play(st["chat"], MediaStream(path, video_flags=MediaStream.Flags.IGNORE))
+            await st["call"].play(
+                st["chat"],
+                MediaStream(path, video_flags=MediaStream.Flags.IGNORE),
+            )
             log.info(f"Now streaming: {label}")
         except Exception as e:
-            log.error(f"play_next failed for '{label}': {e}")
+            log.error(f"play_next failed for '{label}': {type(e).__name__}: {e}")
             if os.path.exists(path):
                 os.remove(path)
             await play_next(user_id)  # skip broken file, try next
@@ -74,7 +96,7 @@ def register(client):
             except OSError:
                 pass
 
-    # ---------------- 1. .vctarget (link / username / chat id — sab chalega) ----------------
+    # ---------------- 1. .vctarget (link / username / chat id) ----------------
     @client.on(events.NewMessage(chats='me', pattern=r'^\.vctarget(?:\s+(.+))?$'))
     async def vc_target(event):
         target = event.pattern_match.group(1)
@@ -83,7 +105,7 @@ def register(client):
                 "❌ **Usage:** `.vctarget @username` / `https://t.me/...` / `-100xxxxxxxxxx`"
             )
         try:
-            entity = await client.get_entity(target.strip())
+            entity = await resolve_target(target)
             chat_id = utils.get_peer_id(entity)   # marked ID: -100... for channels/GCs
             await set_vc_chat(event.sender_id, chat_id)
             st = state(event.sender_id)
@@ -92,13 +114,15 @@ def register(client):
             title = getattr(entity, "title", str(chat_id))
             await event.edit(
                 f"🎯 **VC Target Locked:** `{title}` (`{chat_id}`)\n\n"
-                "ℹ️ Make sure:\n"
-                "• Your account is in that group\n"
-                "• A voice chat is already started\n\n"
-                "🎙️ Now reply `.vcstream` to any audio in Saved Messages."
+                "🎙️ Now reply `.vcstream` to any audio in Saved Messages.\n"
+                "ℹ️ If the group has no active voice chat, one will be started automatically."
             )
         except Exception as e:
-            await event.edit(f"❌ **Failed to resolve:** `{e}`")
+            await event.edit(
+                f"❌ **Failed to resolve:** `{type(e).__name__}`\n\n"
+                "💡 **Tip:** For private groups, make sure this account has joined the "
+                "group at least once, then use its `-100...` chat ID."
+            )
 
     # ---------------- 2. .vcstream ----------------
     @client.on(events.NewMessage(chats='me', pattern=r'^\.vcstream$'))
@@ -114,7 +138,7 @@ def register(client):
             return await event.edit(
                 "❌ No target set. Use `.vctarget @group` first."
             )
-        chat_id = marked_id(chat_id)   # safety: old positive IDs bhi sahi ho jayengi
+        chat_id = marked_id(chat_id)
 
         status = await event.edit("⬇️ **Downloading audio...**")
         call = await get_call(event.sender_id)
@@ -133,7 +157,11 @@ def register(client):
             if st["now"] is None:
                 st["now"] = label
                 await status.edit("📡 **Joining voice chat...**")
-                await call.play(chat_id, MediaStream(temp, video_flags=MediaStream.Flags.IGNORE))
+                await call.play(
+                    chat_id,
+                    MediaStream(temp, video_flags=MediaStream.Flags.IGNORE),
+                    GroupCallConfig(auto_start=True),   # VC na ho to khud start karega
+                )
                 await status.edit(
                     f"🎙️ **Streaming Live!**\n\n"
                     f"📍 **Chat:** `{chat_id}`\n"
@@ -147,9 +175,14 @@ def register(client):
                     f"📋 **Queue:** `{len(st['queue'])}`"
                 )
         except Exception as e:
+            st["now"] = None
             if os.path.exists(temp):
                 os.remove(temp)
-            await status.edit(f"❌ **Stream failed:** `{e}`")
+            log.error(f"vc_stream error: {type(e).__name__}: {e}", exc_info=True)
+            await status.edit(
+                f"❌ **Stream failed:** `{type(e).__name__}`\n"
+                f"```{str(e) or '(no message)'}```"
+            )
 
     # ---------------- 3. .vcqueue ----------------
     @client.on(events.NewMessage(chats='me', pattern=r'^\.vcqueue$'))
@@ -194,7 +227,7 @@ def register(client):
             if st["chat"]:
                 await st["call"].leave_call(st["chat"])
         except Exception as e:
-            log.warning(f"leave_call: {e}")
+            log.warning(f"leave_call: {type(e).__name__}: {e}")
 
         cleanup_files(event.sender_id)
         VC.pop(event.sender_id, None)
