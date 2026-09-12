@@ -1,5 +1,6 @@
 import os
 import glob
+import asyncio
 import logging
 from telethon import events, utils
 from pytgcalls import PyTgCalls
@@ -50,7 +51,10 @@ def register(client):
             return VC[user_id]["call"]
         try:
             call = PyTgCalls(client)
-            await call.start()
+            await asyncio.wait_for(call.start(), timeout=30)   # 🔑 hang-proof init
+        except asyncio.TimeoutError:
+            log.error(f"VC init timed out for {user_id}")
+            return None
         except Exception as e:
             log.error(f"VC init failed for {user_id}: {type(e).__name__}: {e}", exc_info=True)
             return None
@@ -106,7 +110,7 @@ def register(client):
             )
         try:
             entity = await resolve_target(target)
-            chat_id = utils.get_peer_id(entity)   # marked ID: -100... for channels/GCs
+            chat_id = utils.get_peer_id(entity)
             await set_vc_chat(event.sender_id, chat_id)
             st = state(event.sender_id)
             if st:
@@ -141,7 +145,13 @@ def register(client):
         chat_id = marked_id(chat_id)
 
         status = await event.edit("⬇️ **Downloading audio...**")
-        call = await get_call(event.sender_id)
+
+        # 🔑 SPEED FIX #1: PyTgCalls init ko download ke SAATH parallel start karo
+        # (pehli baar VC init 10-20s leta hai — download ke wait ke baad nahi)
+        call, temp = await asyncio.gather(
+            get_call(event.sender_id),
+            client.download_media(reply, f"vc_{event.sender_id}_{reply.id}.mp3"),
+        )
         if not call:
             return await status.edit("❌ **VC engine failed to start.** Check logs.")
 
@@ -149,19 +159,35 @@ def register(client):
         st["chat"] = chat_id
 
         label = reply.file.name or f"voice_{reply.id}"
-        temp = f"vc_{event.sender_id}_{reply.id}.mp3"
 
         try:
-            await client.download_media(reply, temp)
+            if not temp or not os.path.exists(temp):
+                return await status.edit("❌ **Download failed.** Try again.")
 
             if st["now"] is None:
                 st["now"] = label
                 await status.edit("📡 **Joining voice chat...**")
-                await call.play(
-                    chat_id,
-                    MediaStream(temp, video_flags=MediaStream.Flags.IGNORE),
-                    GroupCallConfig(auto_start=True),   # VC na ho to khud start karega
-                )
+
+                # 🔑 SPEED FIX #2: join/connect pe timeout — infinite hang nahi hoga
+                try:
+                    await asyncio.wait_for(
+                        call.play(
+                            chat_id,
+                            MediaStream(temp, video_flags=MediaStream.Flags.IGNORE),
+                            GroupCallConfig(auto_start=True),
+                        ),
+                        timeout=45,
+                    )
+                except asyncio.TimeoutError:
+                    st["now"] = None
+                    if os.path.exists(temp):
+                        os.remove(temp)
+                    return await status.edit(
+                        "❌ **Join timed out.** Possible reasons:\n"
+                        "• No permission to start/manage voice chat in that group\n"
+                        "• Telegram servers slow — try again in a minute"
+                    )
+
                 await status.edit(
                     f"🎙️ **Streaming Live!**\n\n"
                     f"📍 **Chat:** `{chat_id}`\n"
@@ -210,7 +236,6 @@ def register(client):
             await event.edit("⏭️ **Skipping to next track...**")
             await play_next(event.sender_id)
         else:
-            # Queue empty -> stay in VC, just inform
             await event.edit(
                 "⚠️ **Queue is empty.** Current track will keep playing. "
                 "Queue more with `.vcstream` or stop with `.vcstop`."
