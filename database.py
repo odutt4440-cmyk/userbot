@@ -32,21 +32,25 @@ ai_db = None
 pack_db = None
 reaction_db = None
 
-# --- 🔥 THE FINAL FIXED INITIALIZATION FUNCTION ---
+# --- 🔥 THE ULTIMATE ROBUST INITIALIZATION FUNCTION ---
 async def init_db():
     global db, users_db, subs_db, state_db, banned_db, trials_db, settings_db, sudo_db, afk_db, warn_db, stealth_db, ai_db, pack_db, reaction_db
+    
     try:
-        log.info("Connecting to MongoDB Cloud...")
-        # Certifi bundle use karna Railway par SSL error khatam karta hai
+        log.info("Connecting to MongoDB Cloud (Robust Mode)...")
         ca = certifi.where()
         
-        # Connection parameters
+        # 🔥 ULTRA-STABLE PARAMETERS
+        # Isse DNS issues (Errno -3) aur Primary re-election handle honge
         client = AsyncIOMotorClient(
             MONGO_URL,
             tlsCAFile=ca, 
-            serverSelectionTimeoutMS=5000, 
-            maxPoolSize=50,
-            retryWrites=False
+            serverSelectionTimeoutMS=15000, # 15 sec tak wait karega node milne ke liye
+            connectTimeoutMS=30000,        # DNS resolve ke liye 30 sec ka buffer
+            socketTimeoutMS=30000,         # Data transfer timeout
+            retryWrites=True,              # Write fail hone par automatic retry
+            retryReads=True,               # Read fail hone par automatic retry
+            heartbeatFrequencyMS=10000     # Har 10 sec me connection zinda rakhega
         )
         
         db = client["UserbotCommunity"]
@@ -66,16 +70,19 @@ async def init_db():
         pack_db = db["sticker_packs"]
         reaction_db = db["reaction_settings"]
 
-        # Ping check
+        # 🔥 Pehle ping check (Agar network slow hai toh yahan retry logic trigger hoga)
         await db.command("ping")
         log.info("🚀 MongoDB Cloud Connected Successfully!")
         
-        # 🔥 Cache load karo startup par (Optimized logic)
+        # Cache load startup par
         await reload_caches()
 
     except Exception as e:
-        # Ye block hona ZAROORI hai Python me
-        log.error(f"❌ MongoDB Connection Failed: {e}")
+        log.error(f"❌ MongoDB Connection Error: {e}")
+        log.info("🔄 Retrying in 10 seconds...")
+        # 🔥 CRITICAL: Bot ko crash hone se bachata hai aur khud reconnect karta hai
+        await asyncio.sleep(10)
+        return await init_db()
 
 async def reload_caches():
     """DB se data utha kar RAM cache me bharta hai (Optimization)"""
