@@ -11,4 +11,3 @@ requests
 aiohttp
 pillow
 wordfreq
-git
